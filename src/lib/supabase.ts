@@ -15,3 +15,14 @@ export const supabase =
   supabaseUrl && supabaseAnonKey
     ? createClient(supabaseUrl, supabaseAnonKey, { db: { schema: 'taskapp' } })
     : null
+
+/**
+ * A separate, session-less client used only to email magic links to invited people.
+ * Keeping it apart means sending an invite can never touch the admin's own login.
+ */
+export function createMailerClient() {
+  if (!supabaseUrl || !supabaseAnonKey) return null
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: 'tradmak-invite-mailer' },
+  })
+}

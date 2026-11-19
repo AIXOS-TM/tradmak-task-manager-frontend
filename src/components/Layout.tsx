@@ -8,18 +8,31 @@ import Avatar from './Avatar'
 import Icon, { type IconName } from './Icon'
 import TaskPanel from './TaskPanel'
 
-const NAV: { to: string; label: string; icon: IconName }[] = [
+const NAV: { to: string; label: string; icon: IconName; adminOnly?: boolean }[] = [
   { to: '/dashboard', label: 'My tasks', icon: 'tasks' },
   { to: '/projects', label: 'Projects', icon: 'folder' },
   { to: '/meetings', label: 'Meetings', icon: 'mic' },
   { to: '/team', label: 'Team', icon: 'users' },
+  { to: '/admin', label: 'Admin', icon: 'shield', adminOnly: true },
   { to: '/settings', label: 'Settings', icon: 'settings' },
 ]
 
 export default function Layout() {
   const [navOpen, setNavOpen] = useState(false)
   const currentUser = useCurrentUser()
-  const { signOut } = useAuth()
+  const { signOut, workspaces, joined } = useAuth()
+  const { showToast } = useApp()
+  const isAdminAnywhere = workspaces.some((w) => w.member_role === 'owner' || w.member_role === 'admin')
+
+  // Existing users who just accepted an email invite: tell them where they are now.
+  const announced = useRef(0)
+  useEffect(() => {
+    if (joined.length > announced.current) {
+      const names = joined.slice(announced.current).map((j) => j.workspace_name)
+      announced.current = joined.length
+      showToast(`You joined ${names.join(', ')}`)
+    }
+  }, [joined, showToast])
   const summary = useApi(() => api.summary(), [])
   const projects = useApi(() => api.projects(), [])
 
@@ -37,7 +50,7 @@ export default function Layout() {
         </div>
 
         <nav className="sidebar-nav" onClick={() => setNavOpen(false)}>
-          {NAV.map((item) => (
+          {NAV.filter((item) => !item.adminOnly || isAdminAnywhere).map((item) => (
             <NavLink key={item.to} to={item.to} className="nav-item">
               <Icon name={item.icon} />
               <span>{item.label}</span>
@@ -58,6 +71,7 @@ export default function Layout() {
             <NavLink key={p.id} to={`/projects/${p.id}`} className="nav-item nav-project">
               <span className="dot" style={{ background: p.color }} />
               <span className="truncate">{p.name}</span>
+              {p.is_private && <Icon name="lock" size={12} className="nav-private" aria-label="Private project" />}
             </NavLink>
           ))}
         </nav>

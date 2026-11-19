@@ -117,28 +117,6 @@
 }
 
 /* ---------- Roles ---------- */
-.add-member {
-  padding: 18px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.add-member-head h2 {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 15px;
-  font-weight: 600;
-}
-.add-member-row {
-  display: flex;
-  align-items: flex-end;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.add-member-email {
-  flex: 1 1 260px;
-}
 .member-role-row {
   display: flex;
   align-items: center;
@@ -165,3 +143,18 @@
 .role-owner { background: #fef3c7; color: #92400e; }
 .role-admin { background: var(--accent-soft); color: var(--accent-text); }
 .role-manager { background: #ecfeff; color: #0e7490; }
+
+.team-invite-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  margin-bottom: 20px;
+}
+.team-invite-banner .muted {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}

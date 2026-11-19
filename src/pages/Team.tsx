@@ -1,4 +1,5 @@
-import { useState, type FormEvent } from 'react'
+import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import Avatar from '../components/Avatar'
 import Icon from '../components/Icon'
 import { EmptyState, ErrorState, LoadingState } from '../components/States'
@@ -10,12 +11,6 @@ import { useApp, useAuth, useCurrentUser } from '../store/useApp'
 import '../styles/team.css'
 
 const ASSIGNABLE: AssignableRole[] = ['admin', 'manager', 'member']
-const ROLE_HELP: Record<AssignableRole, string> = {
-  admin: 'Everything, including members and roles',
-  manager: 'Assign and manage everyone’s tasks, create projects',
-  member: 'Work on their own tasks, comment on any task',
-}
-
 export default function Team() {
   const currentUser = useCurrentUser()
   const { workspaces } = useAuth()
@@ -50,7 +45,16 @@ export default function Team() {
         )}
       </div>
 
-      {isAdmin && workspaceId && <AddMemberForm workspaceId={workspaceId} />}
+      {isAdmin && (
+        <div className="card team-invite-banner">
+          <span className="muted">
+            <Icon name="mail" size={15} /> Want to add someone? Send them an email invite from the Admin page.
+          </span>
+          <Link to="/admin?tab=invites" className="btn btn-primary btn-sm">
+            Invite people
+          </Link>
+        </div>
+      )}
 
       {members.error && !members.data ? (
         <div className="card">
@@ -79,64 +83,6 @@ export default function Team() {
         </div>
       )}
     </div>
-  )
-}
-
-function AddMemberForm({ workspaceId }: { workspaceId: string }) {
-  const { showToast, invalidate } = useApp()
-  const [email, setEmail] = useState('')
-  const [role, setRole] = useState<AssignableRole>('member')
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const onSubmit = async (e: FormEvent) => {
-    e.preventDefault()
-    if (!email.trim()) return
-    setSaving(true)
-    setError(null)
-    try {
-      const member = await api.addMember(workspaceId, email.trim(), role)
-      showToast(`${member.name} added as ${ROLE_LABELS[role]}`)
-      setEmail('')
-      setRole('member')
-      invalidate()
-    } catch (err) {
-      setError(errorMessage(err))
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <form className="card add-member" onSubmit={onSubmit}>
-      <div className="add-member-head">
-        <h2>
-          <Icon name="user" size={16} /> Add a team member
-        </h2>
-        <p className="muted small">They need an account first: ask them to sign up, then add them here with their email.</p>
-      </div>
-      {error && <p className="form-error">{error}</p>}
-      <div className="add-member-row">
-        <label className="field add-member-email">
-          <span>Email</span>
-          <input id="am-email" className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@company.com" required />
-        </label>
-        <label className="field">
-          <span>Role</span>
-          <select id="am-role" className="input" value={role} onChange={(e) => setRole(e.target.value as AssignableRole)}>
-            {ASSIGNABLE.map((r) => (
-              <option key={r} value={r}>
-                {ROLE_LABELS[r]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button type="submit" className="btn btn-primary" disabled={!email.trim() || saving}>
-          {saving ? 'Adding…' : 'Add member'}
-        </button>
-      </div>
-      <p className="muted small">{ROLE_LABELS[role]}: {ROLE_HELP[role]}.</p>
-    </form>
   )
 }
 

@@ -2,7 +2,7 @@ import type { Session } from '@supabase/supabase-js'
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { api, AUTH_EXPIRED_EVENT, errorMessage } from '../lib/api'
 import { supabase } from '../lib/supabase'
-import type { User, Workspace } from '../lib/types'
+import type { JoinedWorkspace, User, Workspace } from '../lib/types'
 import { AuthContext, type AuthContextValue, type AuthStatus, type SignUpResult } from './context'
 
 interface ProfileState {
@@ -10,6 +10,8 @@ interface ProfileState {
   userId: string
   data: { user: User; workspaces: Workspace[] } | null
   error: string | null
+  /** Organizations joined through an invite during this visit (for the Welcome page). */
+  joined: JoinedWorkspace[]
 }
 
 const NOT_CONFIGURED =
@@ -19,7 +21,7 @@ const NOT_CONFIGURED =
  * Auth with the browser Supabase client (anon key):
  * - checks for an existing session on load and listens for sign-in / sign-out,
  * - loads the profile (api.me) for the signed-in user,
- * - creates a first workspace for brand-new users,
+ * - accepts pending email invitations (joins those organizations),
  * - signs out when Supabase rejects the session (expired / invalid).
  */
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -48,15 +50,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false
     ;(async () => {
       try {
-        let me = await api.me()
-        if (me.workspaces.length === 0) {
-          // New account (signed up in the browser): give them a workspace to work in.
-          await api.createWorkspace(`${me.user.name.split(' ')[0]}'s workspace`)
-          me = await api.me()
+        // Join any organization that invited this email (magic link invites). No-op otherwise.
+        const joined = await api.acceptInvitations()
+        const me = await api.me()
+        if (!cancelled) {
+          setProfile((prev) => ({ userId, data: me, error: null, joined: [...(prev?.userId === userId ? prev.joined : []), ...joined] }))
         }
-        if (!cancelled) setProfile({ userId, data: me, error: null })
       } catch (err) {
-        if (!cancelled) setProfile((prev) => ({ userId, data: prev?.userId === userId ? prev.data : null, error: errorMessage(err) }))
+        if (!cancelled) setProfile((prev) => ({
+            userId,
+            data: prev?.userId === userId ? prev.data : null,
+            error: errorMessage(err),
+            joined: prev?.userId === userId ? prev.joined : [],
+          }))
       }
     })()
     return () => {
@@ -121,6 +127,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     workspaces: mine?.data?.workspaces ?? [],
     notice,
     profileError: mine?.error ?? null,
+    joined: mine?.joined ?? [],
+    needsWelcome: !!session?.user.user_metadata?.invited && !session.user.user_metadata?.onboarded,
     signIn,
     signUp,
     signOut,

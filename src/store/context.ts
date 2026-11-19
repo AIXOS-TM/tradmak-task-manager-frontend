@@ -1,6 +1,6 @@
 import { createContext } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import type { User, Workspace } from '../lib/types'
+import type { JoinedWorkspace, User, Workspace } from '../lib/types'
 
 // ---------- UI state shared across pages ----------
 
@@ -49,6 +49,10 @@ export interface AuthContextValue {
   /** Why the user was sent back to login (e.g. session expired). */
   notice: string | null
   profileError: string | null
+  /** Organizations just joined by accepting an email invite. */
+  joined: JoinedWorkspace[]
+  /** Invited by email and hasn't filled in the Welcome form (name, password) yet. */
+  needsWelcome: boolean
   signIn: (email: string, password: string) => Promise<string | null>
   signUp: (name: string, email: string, password: string) => Promise<SignUpResult>
   signOut: () => Promise<void>

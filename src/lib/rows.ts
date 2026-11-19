@@ -25,6 +25,9 @@ export interface WorkspaceRow {
   name: string
   owner_id: string | null
   created_at: string
+  // Added in migration 008 (missing on older databases).
+  default_lists?: string[]
+  allowed_domains?: string[]
 }
 
 export interface MemberRow {
@@ -32,7 +35,12 @@ export interface MemberRow {
   workspace_id: string
   user_id: string
   role: DbMemberRole
+  // Added in migration 005 (missing on older databases).
+  status?: 'active' | 'deactivated'
+  created_at?: string
 }
+
+export const isActiveMember = (m: Pick<MemberRow, 'status'>) => m.status !== 'deactivated'
 
 export interface ProjectRow {
   id: string
@@ -40,6 +48,10 @@ export interface ProjectRow {
   name: string
   description: string
   health: ProjectStatus
+  /** 'archived' hides the project from everyday views. */
+  status?: 'active' | 'archived'
+  /** Added in migration 007 (missing on older databases). */
+  is_private?: boolean
   color: string
   owner_id: string | null
   end_date: string | null
@@ -151,7 +163,7 @@ export function toUser(r: ProfileRow): User {
   }
 }
 
-export type ProjectBase = Omit<Project, 'members' | 'task_count' | 'done_count' | 'open_count'>
+export type ProjectBase = Omit<Project, 'owner' | 'members' | 'task_count' | 'done_count' | 'open_count'>
 
 export function toProject(r: ProjectRow): ProjectBase {
   return {
@@ -164,6 +176,8 @@ export function toProject(r: ProjectRow): ProjectBase {
     owner_id: r.owner_id ?? '',
     due_date: r.end_date,
     created_at: r.created_at,
+    archived: r.status === 'archived',
+    is_private: r.is_private ?? false,
   }
 }
 

@@ -604,3 +604,9 @@
 .panel-delete {
   margin-left: auto;
 }
+
+.nav-private {
+  flex: none;
+  margin-left: auto;
+  opacity: 0.55;
+}

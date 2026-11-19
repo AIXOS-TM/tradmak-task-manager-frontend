@@ -12,6 +12,7 @@
  */
 import type { PostgrestError } from '@supabase/supabase-js'
 import {
+  isActiveMember,
   toActionItem,
   toComment,
   toDbStatus,
@@ -32,12 +33,23 @@ import {
   type TaskRow,
   type WorkspaceRow,
 } from './rows'
-import { supabase } from './supabase'
+import { createMailerClient, supabase } from './supabase'
 import type {
+  WorkspaceSettings,
+  AdminProject,
   ActionItem,
+  ActivityCategory,
+  ActivityEntry,
+  ActivityPage,
+  AdminMember,
+  AdminOverview,
   AssignableRole,
   Comment,
   DashboardSummary,
+  Invitation,
+  InviteResult,
+  JoinedWorkspace,
+  MemberStatus,
   MeetingDetail,
   MeetingSummary,
   Member,
@@ -103,8 +115,8 @@ function toApiError(err: PostgrestError, what: string): ApiError {
     return new ApiError(403, /row-level security|permission denied/i.test(msg) ? `You don't have permission to ${what}.` : msg)
   }
   if (err.code === 'P0001') return new ApiError(400, msg) // raised by a taskapp function
-  if (err.code === 'PGRST202') {
-    return new ApiError(500, `A database function is missing. Run database/migrations/003_frontend_rpc.sql in the Supabase SQL Editor.`)
+  if (err.code === 'PGRST202' || err.code === 'PGRST205' || err.code === '42P01') {
+    return new ApiError(500, 'The database is missing a newer update. Run the latest files in database/migrations in the Supabase SQL Editor.')
   }
   if (/failed to fetch|networkerror|load failed/i.test(msg)) return new ApiError(0, "Can't reach Supabase. Check your internet connection.")
   return new ApiError(500, `Couldn't ${what}: ${msg}`)
@@ -196,12 +208,13 @@ async function hydrateProjects(rows: ProjectRow[]): Promise<Project[]> {
     db.from('project_members').select('*').in('project_id', ids).then((r) => check<ProjectMemberRow[]>(r, 'load project members')),
     db.from('tasks').select('project_id, status').in('project_id', ids).then((r) => check<Pick<TaskRow, 'project_id' | 'status'>[]>(r, 'count project tasks')),
   ])
-  const profiles = await fetchByIds<ProfileRow>('profiles', memberRows.map((m) => m.user_id))
+  const profiles = await fetchByIds<ProfileRow>('profiles', [...memberRows.map((m) => m.user_id), ...rows.map((r) => r.owner_id)])
   return rows.map((r) => {
     const projectTasks = taskRows.filter((t) => t.project_id === r.id)
     const done = projectTasks.filter((t) => t.status === 'done').length
     return {
       ...toProject(r),
+      owner: refOf(profiles, r.owner_id),
       members: memberRows
         .filter((m) => m.project_id === r.id)
         .map((m) => refOf(profiles, m.user_id))
@@ -258,7 +271,9 @@ async function hydrateActionItems(rows: ActionItemRow[]): Promise<ActionItem[]> 
 // =====================================================================
 
 async function myWorkspaces(userId: string): Promise<Workspace[]> {
-  const members = check<MemberRow[]>(await client().from('members').select('*').eq('user_id', userId), 'load your workspaces')
+  const members = check<MemberRow[]>(await client().from('members').select('*').eq('user_id', userId), 'load your workspaces').filter(
+    isActiveMember,
+  )
   const workspaces = await fetchByIds<WorkspaceRow>('workspaces', members.map((m) => m.workspace_id))
   return members
     .map((m): Workspace | null => {
@@ -269,11 +284,8 @@ async function myWorkspaces(userId: string): Promise<Workspace[]> {
 }
 
 async function myWorkspaceIds(userId: string): Promise<string[]> {
-  const rows = check<{ workspace_id: string }[]>(
-    await client().from('members').select('workspace_id').eq('user_id', userId),
-    'load your workspaces',
-  )
-  return rows.map((r) => r.workspace_id)
+  const rows = check<MemberRow[]>(await client().from('members').select('*').eq('user_id', userId), 'load your workspaces')
+  return rows.filter(isActiveMember).map((r) => r.workspace_id)
 }
 
 async function workspaceOwnerId(workspaceId: string): Promise<string | null> {
@@ -300,15 +312,18 @@ async function roleIn(workspaceId: string, userId: string): Promise<WorkspaceRol
 }
 
 async function isWorkspaceMember(workspaceId: string, userId: string): Promise<boolean> {
-  const rows = check<{ id: string }[]>(
-    await client().from('members').select('id').eq('workspace_id', workspaceId).eq('user_id', userId).limit(1),
+  const rows = check<MemberRow[]>(
+    await client().from('members').select('*').eq('workspace_id', workspaceId).eq('user_id', userId).limit(1),
     'check membership',
   )
-  return rows.length > 0
+  return rows.some(isActiveMember)
 }
 
-/** Members of the given workspaces, with counts of tasks ASSIGNED to them (personal tasks stay private). */
-async function listMembers(workspaceIds: string[]): Promise<Member[]> {
+/**
+ * Members of the given workspaces, with counts of tasks ASSIGNED to them (personal tasks stay private).
+ * Deactivated members are left out unless includeDeactivated is set (Admin page).
+ */
+async function listMembers(workspaceIds: string[], { includeDeactivated = false } = {}): Promise<Member[]> {
   if (workspaceIds.length === 0) return []
   const db = client()
   const [members, workspaces, projectRows] = await Promise.all([
@@ -333,12 +348,15 @@ async function listMembers(workspaceIds: string[]): Promise<Member[]> {
   for (const m of members) {
     const profile = profiles.get(m.user_id)
     if (!profile || seen.has(m.user_id)) continue
+    if (!includeDeactivated && !isActiveMember(m)) continue
     const isOwner = workspaceIds.some((id) => workspaces.get(id)?.owner_id === m.user_id)
     const assigned = taskRows.filter((t) => t.assignee_id === m.user_id)
     const done = assigned.filter((t) => t.status === 'done').length
     seen.set(m.user_id, {
       ...toUser(profile),
       member_role: toWorkspaceRole(m.role, isOwner),
+      status: isOwner || isActiveMember(m) ? 'active' : 'deactivated',
+      joined_at: m.created_at ?? null,
       task_count: assigned.length,
       done_count: done,
       open_count: assigned.length - done,
@@ -348,7 +366,7 @@ async function listMembers(workspaceIds: string[]): Promise<Member[]> {
 }
 
 async function memberView(workspaceId: string, userId: string): Promise<Member> {
-  const member = (await listMembers([workspaceId])).find((m) => m.id === userId)
+  const member = (await listMembers([workspaceId], { includeDeactivated: true })).find((m) => m.id === userId)
   if (!member) throw notFound('Member')
   return member
 }
@@ -464,6 +482,100 @@ async function listReviewItems(workspaceIds: string[]): Promise<ReviewItem[]> {
 }
 
 // =====================================================================
+// Organization admin: invitations
+// =====================================================================
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const INVITE_DAYS = 7
+
+interface InvitationRow {
+  id: string
+  workspace_id: string
+  email: string
+  role: AssignableRole
+  status: Invitation['status']
+  invited_by: string | null
+  created_at: string
+  expires_at: string
+}
+
+/**
+ * Emails a magic link (Supabase creates the account if it doesn't exist). The link opens
+ * /welcome, where the app accepts the invite. Returns an error message, or null when sent.
+ */
+async function sendInviteEmail(email: string): Promise<string | null> {
+  const mailer = createMailerClient()
+  if (!mailer) return 'Supabase is not configured.'
+  const { error } = await mailer.auth.signInWithOtp({
+    email,
+    options: {
+      shouldCreateUser: true,
+      emailRedirectTo: `${window.location.origin}/welcome`,
+      // Only stored for brand-new accounts: tells the app to show the Welcome form.
+      data: { invited: true, app: 'taskapp' },
+    },
+  })
+  if (!error) return null
+  const msg = error.message ?? ''
+  if (/rate limit|security purposes|too many/i.test(msg)) return 'Too many emails were sent just now. Wait a minute, then press Resend.'
+  if (/signups? not allowed|signup.*disabled/i.test(msg)) return "New sign-ups are turned off on the Supabase server, so new people can't be invited."
+  if (/sending|smtp|mail/i.test(msg)) return "The email couldn't be sent. Check the SMTP settings on the Supabase server."
+  return msg
+}
+
+function inviteExpiry() {
+  return new Date(Date.now() + INVITE_DAYS * 24 * 60 * 60 * 1000).toISOString()
+}
+
+const isoDay = (x: Date) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`
+
+// =====================================================================
+// Activity log
+// =====================================================================
+
+interface ActivityRow {
+  id: number
+  workspace_id: string
+  actor_id: string | null
+  action: string
+  entity_type: ActivityEntry['entity_type']
+  entity_id: string | null
+  entity_name: string | null
+  project_id: string | null
+  target_user_id: string | null
+  details: Record<string, unknown>
+  created_at: string
+}
+
+/** Which entity types each filter on the Activity tab shows (null = everything). */
+const ACTIVITY_TYPES: Record<ActivityCategory, ActivityEntry['entity_type'][] | null> = {
+  all: null,
+  tasks: ['task', 'ai_item'],
+  projects: ['project'],
+  people: ['member', 'invite'],
+  organization: ['organization'],
+}
+
+// =====================================================================
+// Organization settings & CSV export
+// =====================================================================
+
+const DOMAIN_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/
+const CSV_STATUS: Record<TaskStatus, string> = { todo: 'To do', in_progress: 'In progress', done: 'Done' }
+
+/**
+ * Builds a CSV file. Cells that start with = + - @ get a leading apostrophe so a spreadsheet
+ * never runs them as formulas (CSV injection). Starts with a BOM so Excel reads UTF-8 correctly.
+ */
+function toCsv(header: string[], rows: string[][]): string {
+  const cell = (v: string) => {
+    const safe = /^[=+\-@\t\r]/.test(v) ? `'${v}` : v
+    return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe
+  }
+  return '﻿' + [header, ...rows].map((r) => r.map(cell).join(',')).join('\r\n')
+}
+
+// =====================================================================
 // Public API used by the pages
 // =====================================================================
 
@@ -509,15 +621,6 @@ export const api = {
     return listMembers(ids)
   },
 
-  /** The person must already have an account (they sign up first). */
-  async addMember(workspaceId: string, email: string, role: AssignableRole): Promise<Member> {
-    const userId = check<string>(
-      await client().rpc('add_member_by_email', { p_workspace_id: workspaceId, p_email: email.trim().toLowerCase(), p_role: role }),
-      'add members',
-    )
-    return memberView(workspaceId, userId)
-  },
-
   async updateMemberRole(workspaceId: string, userId: string, role: AssignableRole): Promise<Member> {
     await assertCanChangeMember(workspaceId, userId)
     const rows = check<{ id: string }[]>(
@@ -548,14 +651,15 @@ export const api = {
 
   // ---------- Projects ----------
 
-  async projects(): Promise<Project[]> {
+  /** Projects in all my organizations. Archived ones are left out unless asked for. */
+  async projects({ includeArchived = false } = {}): Promise<Project[]> {
     const ids = await myWorkspaceIds(await me())
     if (ids.length === 0) return []
     const rows = check<ProjectRow[]>(
       await client().from('projects').select('*').in('workspace_id', ids).order('created_at'),
       'load projects',
     )
-    return hydrateProjects(rows)
+    return hydrateProjects(includeArchived ? rows : rows.filter((r) => r.status !== 'archived'))
   },
 
   project: (id: string) => getProject(id),
@@ -599,8 +703,13 @@ export const api = {
       'create projects',
     )
     check(await db.from('project_members').insert({ project_id: row.id, user_id: uid }), 'add you to the project')
-    // Every new project starts with one list so tasks have somewhere to go.
-    check(await db.from('task_lists').insert({ project_id: row.id, name: 'General', position: 0 }), 'create the default list')
+    // Every new project starts with the organization's default lists (Admin → Settings), or "General".
+    const ws = check<WorkspaceRow | null>(await db.from('workspaces').select('*').eq('id', workspaceId).maybeSingle(), 'load the organization')
+    const listNames = ws?.default_lists?.length ? ws.default_lists : ['General']
+    check(
+      await db.from('task_lists').insert(listNames.map((name, position) => ({ project_id: row.id, name, position }))),
+      'create the default lists',
+    )
     return (await hydrateProjects([row]))[0]
   },
 
@@ -806,6 +915,494 @@ export const api = {
       'dismiss AI suggestions',
     )
     if (rows.length === 0) throw forbidden('Only workspace admins and managers can dismiss AI suggestions.')
+  },
+
+  // ---------- Organization admin ----------
+
+  /** Renames an organization (owner and admins). */
+  async renameWorkspace(id: string, name: string): Promise<void> {
+    const rows = check<{ id: string }[]>(
+      await client().from('workspaces').update({ name: name.trim() }).eq('id', id).select('id'),
+      'rename the organization',
+    )
+    if (rows.length === 0) throw forbidden('Only organization admins can rename it.')
+  },
+
+  /** Open (pending) invitations of one organization, newest first. Admins only. */
+  async invitations(workspaceId: string): Promise<Invitation[]> {
+    const rows = check<InvitationRow[]>(
+      await client()
+        .from('invitations')
+        .select('*')
+        .eq('workspace_id', workspaceId)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false }),
+      'load invitations',
+    )
+    const profiles = await fetchByIds<ProfileRow>('profiles', rows.map((r) => r.invited_by))
+    return rows.map((r) => ({ ...r, invited_by: refOf(profiles, r.invited_by) }))
+  },
+
+  /**
+   * Invites people by email: saves an invitation for each address and emails them a magic link.
+   * Works for new people and for people who already have an account.
+   */
+  async invite(workspaceId: string, emails: string[], role: AssignableRole): Promise<InviteResult> {
+    const uid = await me()
+    const result: InviteResult = { sent: [], failed: [] }
+    const wanted = [...new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean))]
+    const existing = new Map((await listMembers([workspaceId], { includeDeactivated: true })).map((m) => [m.email.toLowerCase(), m]))
+
+    // The database enforces allowed domains too; checking here gives a clear message per address.
+    const domains = (await api.workspaceSettings(workspaceId).catch(() => null))?.allowed_domains ?? []
+
+    for (const email of wanted) {
+      if (!EMAIL_RE.test(email)) {
+        result.failed.push({ email, error: 'Not a valid email address.' })
+        continue
+      }
+      if (domains.length && !domains.includes(email.split('@')[1])) {
+        result.failed.push({ email, error: `Only ${domains.map((d) => '@' + d).join(', ')} addresses can be invited (Admin → Settings).` })
+        continue
+      }
+      const member = existing.get(email)
+      if (member) {
+        result.failed.push({
+          email,
+          error: member.status === 'deactivated' ? 'Deactivated member. Reactivate them in the Members tab.' : 'Already a member of this organization.',
+        })
+        continue
+      }
+      const res = await client()
+        .from('invitations')
+        .insert({ workspace_id: workspaceId, email, role, invited_by: uid, expires_at: inviteExpiry() })
+      if (res.error) {
+        result.failed.push({
+          email,
+          error: res.error.code === '23505' ? 'Already invited. Use Resend in the list below.' : toApiError(res.error, 'invite people').message,
+        })
+        continue
+      }
+      const mailError = await sendInviteEmail(email)
+      if (mailError) result.failed.push({ email, error: `Invite saved, but the email failed: ${mailError}` })
+      else result.sent.push(email)
+    }
+    return result
+  },
+
+  /** Sends the magic link again and gives the invite a fresh expiry date. */
+  async resendInvite(invitation: Invitation): Promise<void> {
+    const rows = check<{ id: string }[]>(
+      await client()
+        .from('invitations')
+        .update({ expires_at: inviteExpiry(), created_at: nowIso() })
+        .eq('id', invitation.id)
+        .select('id'),
+      'resend invitations',
+    )
+    if (rows.length === 0) throw forbidden('Only organization admins can resend invitations.')
+    const mailError = await sendInviteEmail(invitation.email)
+    if (mailError) throw new ApiError(502, mailError)
+  },
+
+  async cancelInvite(id: string): Promise<void> {
+    const rows = check<{ id: string }[]>(
+      await client().from('invitations').update({ status: 'cancelled' }).eq('id', id).select('id'),
+      'cancel invitations',
+    )
+    if (rows.length === 0) throw forbidden('Only organization admins can cancel invitations.')
+  },
+
+  /** Joins every organization that invited the signed-in user's email. Safe to call on every sign-in. */
+  async acceptInvitations(): Promise<JoinedWorkspace[]> {
+    const res = await client().rpc('accept_my_invitations')
+    if (res.error?.code === 'PGRST202') {
+      console.warn('Invitations are not set up yet: run database/migrations/004_admin_invites.sql')
+      return []
+    }
+    return check<JoinedWorkspace[] | null>(res, 'accept your invitations') ?? []
+  },
+
+  /** Numbers and team workload for the Admin page. */
+  async adminOverview(workspaceId: string): Promise<AdminOverview> {
+    const db = client()
+    const [members, projectRows, invites] = await Promise.all([
+      listMembers([workspaceId]),
+      db.from('projects').select('id').eq('workspace_id', workspaceId).then((r) => check<{ id: string }[]>(r, 'load projects')),
+      // Before migration 004 the table doesn't exist: just show 0.
+      db
+        .from('invitations')
+        .select('id')
+        .eq('workspace_id', workspaceId)
+        .eq('status', 'pending')
+        .then((r) => (r.error ? [] : (r.data as { id: string }[]))),
+    ])
+    const projectIds = projectRows.map((p) => p.id)
+    const tasks = projectIds.length
+      ? check<Pick<TaskRow, 'assignee_id' | 'status' | 'due_date'>[]>(
+          await db.from('tasks').select('assignee_id, status, due_date').eq('source', 'assigned').in('project_id', projectIds),
+          'load tasks',
+        )
+      : []
+
+    const d = new Date()
+    const today = isoDay(d)
+    const weekEnd = isoDay(new Date(d.getFullYear(), d.getMonth(), d.getDate() + 7))
+    const isOpen = (t: { status: string }) => t.status !== 'done'
+    const isOverdue = (t: { status: string; due_date: string | null }) => isOpen(t) && !!t.due_date && t.due_date < today
+
+    const roles: Record<WorkspaceRole, number> = { owner: 0, admin: 0, manager: 0, member: 0 }
+    for (const m of members) roles[m.member_role]++
+    const open = tasks.filter(isOpen)
+
+    return {
+      members: members.length,
+      roles,
+      projects: projectIds.length,
+      open: open.length,
+      overdue: open.filter(isOverdue).length,
+      done: tasks.length - open.length,
+      due_this_week: open.filter((t) => !!t.due_date && t.due_date >= today && t.due_date <= weekEnd).length,
+      pending_invites: invites.length,
+      workload: members
+        .map((user) => {
+          const mine = tasks.filter((t) => t.assignee_id === user.id)
+          return { user, open: mine.filter(isOpen).length, overdue: mine.filter(isOverdue).length, done: mine.filter((t) => !isOpen(t)).length }
+        })
+        .sort((a, b) => b.overdue - a.overdue || b.open - a.open),
+    }
+  },
+
+  // ---------- Admin: members ----------
+
+  /** Everyone in the organization (deactivated too), with workload, joined date and last sign-in. */
+  async adminMembers(workspaceId: string): Promise<AdminMember[]> {
+    const db = client()
+    const [members, projectRows, activity] = await Promise.all([
+      listMembers([workspaceId], { includeDeactivated: true }),
+      db.from('projects').select('id').eq('workspace_id', workspaceId).then((r) => check<{ id: string }[]>(r, 'load projects')),
+      // Needs migration 005; without it "last active" just stays empty.
+      db
+        .rpc('workspace_member_activity', { p_workspace_id: workspaceId })
+        .then((r) => (r.error ? [] : ((r.data ?? []) as { user_id: string; last_sign_in_at: string | null }[]))),
+    ])
+    const projectIds = projectRows.map((p) => p.id)
+    const tasks = projectIds.length
+      ? check<Pick<TaskRow, 'assignee_id' | 'status' | 'due_date'>[]>(
+          await db.from('tasks').select('assignee_id, status, due_date').eq('source', 'assigned').in('project_id', projectIds),
+          'load tasks',
+        )
+      : []
+    const today = isoDay(new Date())
+    const lastSeen = new Map(activity.map((a) => [a.user_id, a.last_sign_in_at]))
+    const rank: Record<WorkspaceRole, number> = { owner: 0, admin: 1, manager: 2, member: 3 }
+
+    return members
+      .map((m) => {
+        const mine = tasks.filter((t) => t.assignee_id === m.id)
+        const open = mine.filter((t) => t.status !== 'done')
+        return {
+          ...m,
+          open: open.length,
+          overdue: open.filter((t) => !!t.due_date && t.due_date < today).length,
+          done: mine.length - open.length,
+          last_sign_in_at: lastSeen.get(m.id) ?? null,
+        }
+      })
+      .sort(
+        (a, b) =>
+          Number(a.status === 'deactivated') - Number(b.status === 'deactivated') ||
+          rank[a.member_role] - rank[b.member_role] ||
+          a.name.localeCompare(b.name),
+      )
+  },
+
+  /**
+   * Deactivate: they can't open this organization any more (their account, other organizations
+   * and task history stay). Reactivate: let them back in with the same role.
+   */
+  async setMemberStatus(workspaceId: string, userId: string, status: MemberStatus): Promise<void> {
+    await assertCanChangeMember(workspaceId, userId)
+    const res = await client()
+      .from('members')
+      .update({ status, deactivated_at: status === 'deactivated' ? nowIso() : null })
+      .eq('workspace_id', workspaceId)
+      .eq('user_id', userId)
+      .select('id')
+    if (res.error && /status|deactivated_at/.test(res.error.message)) {
+      throw new ApiError(500, 'Deactivating needs a database update. Run database/migrations/005_member_management.sql in the Supabase SQL Editor.')
+    }
+    const rows = check<{ id: string }[]>(res, 'change member status')
+    if (rows.length === 0) throw forbidden('Only workspace admins can deactivate members.')
+  },
+
+  /** Moves someone's unfinished project tasks in this organization to another active member. Returns how many moved. */
+  async reassignOpenTasks(workspaceId: string, fromUserId: string, toUserId: string): Promise<number> {
+    const uid = await me()
+    if (fromUserId === toUserId) throw new ApiError(400, 'Pick a different person to take over the tasks.')
+    if (!WORK_MANAGERS.includes((await roleIn(workspaceId, uid)) ?? 'member')) {
+      throw forbidden('Only workspace admins and managers can reassign tasks.')
+    }
+    if (!(await isWorkspaceMember(workspaceId, toUserId))) throw new ApiError(400, 'That person is not an active member of this organization.')
+
+    const db = client()
+    const projectIds = check<{ id: string }[]>(await db.from('projects').select('id').eq('workspace_id', workspaceId), 'load projects').map(
+      (p) => p.id,
+    )
+    if (projectIds.length === 0) return 0
+    const myProfile = (await fetchByIds<ProfileRow>('profiles', [uid])).get(uid)
+    const moved = check<{ id: string }[]>(
+      await db
+        .from('tasks')
+        .update({
+          assignee_id: toUserId,
+          assigned_by: uid,
+          assigned_by_name: myProfile ? toUser(myProfile).name : null,
+          updated_at: nowIso(),
+        })
+        .eq('assignee_id', fromUserId)
+        .eq('source', 'assigned')
+        .in('status', ['pending', 'in_progress'])
+        .in('project_id', projectIds)
+        .select('id'),
+      'reassign tasks',
+    )
+    return moved.length
+  },
+
+  /** Emails a "reset your password" link (opens /reset-password). Works without being signed in. */
+  async sendPasswordReset(email: string): Promise<void> {
+    const mailer = createMailerClient()
+    if (!mailer) throw new ApiError(0, 'Supabase is not configured.')
+    const { error } = await mailer.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+      redirectTo: `${window.location.origin}/reset-password`,
+    })
+    if (!error) return
+    const msg = error.message ?? ''
+    if (/rate limit|security purposes|too many/i.test(msg)) throw new ApiError(429, 'Too many emails were sent just now. Wait a minute and try again.')
+    if (/sending|smtp|mail/i.test(msg)) throw new ApiError(502, "The email couldn't be sent. Check the SMTP settings on the Supabase server.")
+    throw new ApiError(400, msg)
+  },
+
+  // ---------- Admin: projects ----------
+
+  /** Every project of the organization you can see (archived and private too), with progress and overdue counts. */
+  async adminProjects(workspaceId: string): Promise<AdminProject[]> {
+    const db = client()
+    const rows = check<ProjectRow[]>(
+      await db.from('projects').select('*').eq('workspace_id', workspaceId).order('created_at'),
+      'load projects',
+    )
+    if (rows.length === 0) return []
+    const [projects, tasks] = await Promise.all([
+      hydrateProjects(rows),
+      db
+        .from('tasks')
+        .select('project_id, status, due_date')
+        .in('project_id', rows.map((r) => r.id))
+        .then((r) => check<Pick<TaskRow, 'project_id' | 'status' | 'due_date'>[]>(r, 'load project tasks')),
+    ])
+    const today = isoDay(new Date())
+    return projects
+      .map((p) => ({
+        ...p,
+        overdue_count: tasks.filter((t) => t.project_id === p.id && t.status !== 'done' && !!t.due_date && t.due_date < today).length,
+        progress: p.task_count ? Math.round((p.done_count / p.task_count) * 100) : 0,
+      }))
+      .sort((a, b) => Number(a.archived) - Number(b.archived) || a.name.localeCompare(b.name))
+  },
+
+  /** Archive / restore, make private / visible to everyone, or hand the project to a new owner. */
+  async updateProjectAdmin(id: string, patch: { archived?: boolean; is_private?: boolean; owner_id?: string }): Promise<void> {
+    const db = client()
+    const fields: Record<string, unknown> = {}
+    if (patch.archived !== undefined) fields.status = patch.archived ? 'archived' : 'active'
+    if (patch.is_private !== undefined) fields.is_private = patch.is_private
+    if (patch.owner_id !== undefined) fields.owner_id = patch.owner_id
+
+    const res = await db.from('projects').update(fields).eq('id', id).select('id')
+    if (res.error && /is_private/.test(res.error.message)) {
+      throw new ApiError(500, 'Private projects need a database update. Run database/migrations/007_project_admin.sql in the Supabase SQL Editor.')
+    }
+    const rows = check<{ id: string }[]>(res, 'change this project')
+    if (rows.length === 0) throw forbidden('Only admins and managers who can see this project can change it.')
+
+    // The owner is always one of the project's members.
+    if (patch.owner_id) {
+      const existing = check<ProjectMemberRow[]>(
+        await db.from('project_members').select('*').eq('project_id', id).eq('user_id', patch.owner_id),
+        'load project members',
+      )
+      if (existing.length === 0) check(await db.from('project_members').insert({ project_id: id, user_id: patch.owner_id }), 'add the new owner to the project')
+    }
+  },
+
+  /** Sets exactly who is on the project (adds the missing people, removes the rest). */
+  async setProjectMembers(id: string, userIds: string[]): Promise<void> {
+    const db = client()
+    const project = check<ProjectRow | null>(await db.from('projects').select('*').eq('id', id).maybeSingle(), 'load project')
+    if (!project) throw notFound('Project')
+    const wanted = new Set(userIds)
+    if (project.owner_id) wanted.add(project.owner_id) // the owner can't be taken off their own project
+    const current = new Set(
+      check<ProjectMemberRow[]>(await db.from('project_members').select('*').eq('project_id', id), 'load project members').map((m) => m.user_id),
+    )
+    const add = [...wanted].filter((u) => !current.has(u))
+    const remove = [...current].filter((u) => !wanted.has(u))
+    if (add.length) check(await db.from('project_members').insert(add.map((user_id) => ({ project_id: id, user_id }))), 'add people to the project')
+    if (remove.length) check(await db.from('project_members').delete().eq('project_id', id).in('user_id', remove), 'remove people from the project')
+  },
+
+  // ---------- Admin: organization settings ----------
+
+  /** Default lists, allowed email domains and owner (defaults before migration 008). */
+  async workspaceSettings(workspaceId: string): Promise<WorkspaceSettings> {
+    const row = check<WorkspaceRow | null>(await client().from('workspaces').select('*').eq('id', workspaceId).maybeSingle(), 'load settings')
+    if (!row) throw notFound('Organization')
+    return {
+      default_lists: row.default_lists?.length ? row.default_lists : ['General'],
+      allowed_domains: row.allowed_domains ?? [],
+      owner_id: row.owner_id,
+    }
+  },
+
+  async updateWorkspaceSettings(workspaceId: string, patch: { default_lists?: string[]; allowed_domains?: string[] }): Promise<void> {
+    const fields: Record<string, unknown> = {}
+    if (patch.default_lists) {
+      const lists = [...new Set(patch.default_lists.map((l) => l.trim()).filter(Boolean))]
+      if (lists.length === 0) throw new ApiError(400, 'Keep at least one list.')
+      if (lists.length > 12) throw new ApiError(400, 'Use at most 12 lists.')
+      fields.default_lists = lists
+    }
+    if (patch.allowed_domains) {
+      const domains = [...new Set(patch.allowed_domains.map((d) => d.trim().toLowerCase().replace(/^@/, '')).filter(Boolean))]
+      const bad = domains.find((d) => !DOMAIN_RE.test(d))
+      if (bad) throw new ApiError(400, `"${bad}" doesn't look like an email domain (e.g. tradmak.com).`)
+      if (domains.length > 20) throw new ApiError(400, 'Use at most 20 domains.')
+      fields.allowed_domains = domains
+    }
+    const res = await client().from('workspaces').update(fields).eq('id', workspaceId).select('id')
+    if (res.error && /default_lists|allowed_domains/.test(res.error.message)) {
+      throw new ApiError(500, 'These settings need a database update. Run database/migrations/008_org_settings.sql in the Supabase SQL Editor.')
+    }
+    const rows = check<{ id: string }[]>(res, 'save the settings')
+    if (rows.length === 0) throw forbidden('Only organization admins can change settings.')
+  },
+
+  /** Owner only: hand the organization to another active member. You stay on as an admin. */
+  async transferOwnership(workspaceId: string, newOwnerId: string): Promise<void> {
+    check(await client().rpc('transfer_ownership', { p_workspace_id: workspaceId, p_new_owner: newOwnerId }), 'transfer ownership')
+  },
+
+  /** Owner only. Deletes the organization with all its projects, tasks, meetings and history. */
+  async deleteWorkspace(workspaceId: string): Promise<void> {
+    const rows = check<{ id: string }[]>(await client().from('workspaces').delete().eq('id', workspaceId).select('id'), 'delete the organization')
+    if (rows.length === 0) throw forbidden('Only the owner can delete the organization.')
+  },
+
+  /** Admins (not the owner) can leave an organization. */
+  async leaveWorkspace(workspaceId: string): Promise<void> {
+    const uid = await me()
+    if ((await workspaceOwnerId(workspaceId)) === uid) throw new ApiError(400, 'The owner can’t leave. Transfer ownership first.')
+    const rows = check<{ id: string }[]>(
+      await client().from('members').delete().eq('workspace_id', workspaceId).eq('user_id', uid).select('id'),
+      'leave the organization',
+    )
+    if (rows.length === 0) throw forbidden("You couldn't leave this organization. Ask one of its admins to remove you.")
+  },
+
+  /** All project tasks of the organization as CSV (opens in Excel / Google Sheets). */
+  async exportTasksCsv(workspaceId: string): Promise<string> {
+    const db = client()
+    const projectIds = check<{ id: string }[]>(await db.from('projects').select('id').eq('workspace_id', workspaceId), 'load projects').map((p) => p.id)
+    const rows = projectIds.length
+      ? check<TaskRow[]>(await db.from('tasks').select('*').in('project_id', projectIds).order('created_at'), 'load tasks')
+      : []
+    const tasks = await hydrateTasks(rows)
+    const emails = new Map((await listMembers([workspaceId], { includeDeactivated: true })).map((m) => [m.id, m.email]))
+    return toCsv(
+      ['Project', 'List', 'Title', 'Description', 'Status', 'Priority', 'Assignee', 'Assignee email', 'Assigned by', 'Due date', 'Created', 'Last updated', 'From meeting'],
+      tasks.map((t) => [
+        t.project?.name ?? '',
+        t.list?.name ?? '',
+        t.title,
+        t.description,
+        CSV_STATUS[t.status],
+        t.priority,
+        t.assignee?.name ?? '',
+        t.assignee_id ? (emails.get(t.assignee_id) ?? '') : '',
+        t.assigned_by_name ?? '',
+        t.due_date ?? '',
+        t.created_at.slice(0, 10),
+        t.updated_at.slice(0, 10),
+        t.meeting?.title ?? '',
+      ]),
+    )
+  },
+
+  /** Everyone in the organization as CSV. */
+  async exportMembersCsv(workspaceId: string): Promise<string> {
+    const members = await api.adminMembers(workspaceId)
+    return toCsv(
+      ['Name', 'Email', 'Role', 'Status', 'Job title', 'Joined', 'Last active', 'Open tasks', 'Overdue tasks', 'Done tasks'],
+      members.map((m) => [
+        m.name,
+        m.email,
+        m.member_role,
+        m.status,
+        m.role,
+        m.joined_at?.slice(0, 10) ?? '',
+        m.last_sign_in_at?.slice(0, 10) ?? '',
+        String(m.open),
+        String(m.overdue),
+        String(m.done),
+      ]),
+    )
+  },
+
+  // ---------- Admin: activity log ----------
+
+  /**
+   * The organization's activity log, newest first, in pages of `limit`. Owners/admins only
+   * (database/migrations/006). Filter by person and/or category; pass `before` from the previous page.
+   */
+  async activity(
+    workspaceId: string,
+    opts: { actorId?: string | null; category?: ActivityCategory; before?: number | null; limit?: number } = {},
+  ): Promise<ActivityPage> {
+    const limit = opts.limit ?? 50
+    let query = client().from('activity_log').select('*').eq('workspace_id', workspaceId)
+    if (opts.actorId) query = query.eq('actor_id', opts.actorId)
+    const types = ACTIVITY_TYPES[opts.category ?? 'all']
+    if (types) query = query.in('entity_type', types)
+    if (opts.before) query = query.lt('id', opts.before)
+    const rows = check<ActivityRow[]>(await query.order('id', { ascending: false }).limit(limit + 1), 'load the activity log')
+
+    const page = rows.slice(0, limit)
+    const fromUserId = (r: ActivityRow) => (typeof r.details.from_user === 'string' ? r.details.from_user : null)
+    const [profiles, projects] = await Promise.all([
+      fetchByIds<ProfileRow>('profiles', page.flatMap((r) => [r.actor_id, r.target_user_id, fromUserId(r)])),
+      fetchByIds<ProjectRow>('projects', page.map((r) => r.project_id)),
+    ])
+    return {
+      entries: page.map((r) => {
+        const project = r.project_id ? projects.get(r.project_id) : undefined
+        return {
+          id: r.id,
+          action: r.action,
+          entity_type: r.entity_type,
+          entity_id: r.entity_id,
+          entity_name: r.entity_name,
+          details: r.details ?? {},
+          created_at: r.created_at,
+          actor: refOf(profiles, r.actor_id),
+          target: refOf(profiles, r.target_user_id),
+          from_user: refOf(profiles, fromUserId(r)),
+          project: project ? { id: project.id, name: project.name, color: project.color } : null,
+        }
+      }),
+      next: rows.length > limit ? page[page.length - 1].id : null,
+    }
   },
 
   // ---------- Dashboard ----------

@@ -31,8 +31,14 @@ export interface Workspace {
   member_role: WorkspaceRole
 }
 
+export type MemberStatus = 'active' | 'deactivated'
+
 export interface Member extends User {
   member_role: WorkspaceRole
+  /** Deactivated members keep their account but can't open this organization. */
+  status: MemberStatus
+  /** When they joined this organization (null before migration 005). */
+  joined_at: string | null
   task_count: number
   open_count: number
   done_count: number
@@ -48,6 +54,11 @@ export interface Project {
   owner_id: string
   due_date: string | null
   created_at: string
+  /** Archived projects are hidden from the sidebar and Projects page (Admin → Projects can restore them). */
+  archived: boolean
+  /** Only admins, the owner and the project's members can see a private project. */
+  is_private: boolean
+  owner: UserRef | null
   members: UserRef[]
   task_count: number
   done_count: number
@@ -156,3 +167,104 @@ export interface DashboardSummary {
 export type TaskPatch = Partial<
   Pick<Task, 'title' | 'description' | 'status' | 'priority' | 'due_date' | 'assignee_id' | 'list_id' | 'position'>
 >
+
+// ---------- Organization admin ----------
+
+export type InvitationStatus = 'pending' | 'accepted' | 'cancelled'
+
+export interface Invitation {
+  id: string
+  workspace_id: string
+  email: string
+  role: AssignableRole
+  status: InvitationStatus
+  invited_by: UserRef | null
+  created_at: string
+  expires_at: string
+}
+
+/** Result of sending invites: who got an email and who didn't (with the reason). */
+export interface InviteResult {
+  sent: string[]
+  failed: { email: string; error: string }[]
+}
+
+/** An organization someone just joined by accepting an invite. */
+export interface JoinedWorkspace {
+  workspace_id: string
+  workspace_name: string
+  role: AssignableRole
+}
+
+export interface WorkloadRow {
+  user: Member
+  open: number
+  overdue: number
+  done: number
+}
+
+/** Admin → Settings. */
+export interface WorkspaceSettings {
+  /** Lists every new project starts with. */
+  default_lists: string[]
+  /** Only these email domains can be invited; empty = anyone. */
+  allowed_domains: string[]
+  owner_id: string | null
+}
+
+/** A row in the Admin page's Projects tab. */
+export interface AdminProject extends Project {
+  overdue_count: number
+  /** 0–100, done / all tasks. */
+  progress: number
+}
+
+/** A row in the Admin page's Members tab. */
+export interface AdminMember extends Member {
+  open: number
+  overdue: number
+  done: number
+  /** Last sign-in (null if never, or before migration 005). */
+  last_sign_in_at: string | null
+}
+
+export interface AdminOverview {
+  members: number
+  roles: Record<WorkspaceRole, number>
+  projects: number
+  open: number
+  overdue: number
+  done: number
+  due_this_week: number
+  pending_invites: number
+  workload: WorkloadRow[]
+}
+
+// ---------- Activity log ----------
+
+/** Filter groups on the Activity tab. */
+export type ActivityCategory = 'all' | 'tasks' | 'projects' | 'people' | 'organization'
+
+export interface ActivityEntry {
+  id: number
+  /** e.g. 'task.status_changed', 'member.role_changed' */
+  action: string
+  entity_type: 'task' | 'project' | 'member' | 'invite' | 'organization' | 'ai_item'
+  entity_id: string | null
+  /** Title / name when it happened (still readable after a delete). */
+  entity_name: string | null
+  details: Record<string, unknown>
+  created_at: string
+  actor: UserRef | null
+  /** The person it was about (new assignee, member whose role changed, …). */
+  target: UserRef | null
+  /** Previous assignee, for 'task.reassigned'. */
+  from_user: UserRef | null
+  project: { id: string; name: string; color: string } | null
+}
+
+export interface ActivityPage {
+  entries: ActivityEntry[]
+  /** Pass as `before` to load older entries; null when there are no more. */
+  next: number | null
+}
