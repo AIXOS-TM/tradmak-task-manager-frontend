@@ -4,7 +4,7 @@ import { api, errorMessage } from '../lib/api'
 import { useApp, useAuth, useCurrentUser } from '../store/useApp'
 import '../styles/settings.css'
 
-// Notification preferences have no backend yet, so they're kept on this device only.
+// Notification preferences are not stored in the database yet, so they're kept on this device only.
 const NOTIFICATION_OPTIONS = [
   { key: 'assigned', label: 'A task is assigned to me', desc: 'Get notified when someone gives you a task.' },
   { key: 'due', label: 'Tasks due soon', desc: 'A reminder the day before a task is due.' },

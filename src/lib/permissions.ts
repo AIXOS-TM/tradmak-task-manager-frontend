@@ -1,5 +1,5 @@
-// Mirrors backend/src/lib/permissions.ts so the UI only shows what the user is allowed to do.
-// The backend enforces the same rules; this file just hides buttons.
+// Who may do what, so the UI only shows what the user is allowed to do.
+// The database enforces the same rules with Row Level Security; this file just hides buttons.
 import { useAuth } from '../store/useApp'
 import type { Task, WorkspaceRole } from './types'
 

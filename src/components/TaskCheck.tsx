@@ -5,7 +5,7 @@ import type { Task } from '../lib/types'
 import { useApp } from '../store/useApp'
 import Icon from './Icon'
 
-/** Round checkbox that toggles a task between done and to-do (PATCH /tasks/:id). */
+/** Round checkbox that toggles a task between done and to-do (api.updateTask). */
 export default function TaskCheck({ task, onChanged }: { task: Task; onChanged?: (task: Task) => void }) {
   const { showToast, invalidate } = useApp()
   const [saving, setSaving] = useState(false)

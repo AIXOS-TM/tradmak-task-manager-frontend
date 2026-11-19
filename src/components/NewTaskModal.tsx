@@ -16,7 +16,7 @@ interface Props {
 }
 
 /**
- * POST /tasks: create a project task in one go.
+ * api.createTask: create a project task in one go.
  * Admins and managers pick who gets it; members can only create tasks for themselves.
  */
 export default function NewTaskModal({ project, lists, defaultStatus = 'todo', onClose }: Props) {

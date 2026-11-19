@@ -18,9 +18,9 @@ const NOT_CONFIGURED =
 /**
  * Auth with the browser Supabase client (anon key):
  * - checks for an existing session on load and listens for sign-in / sign-out,
- * - loads the profile from the backend (GET /auth/me) for the signed-in user,
+ * - loads the profile (api.me) for the signed-in user,
  * - creates a first workspace for brand-new users,
- * - signs out when the backend answers 401 (expired / invalid session).
+ * - signs out when Supabase rejects the session (expired / invalid).
  */
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
@@ -64,7 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [userId, profileNonce])
 
-  // 3. Any 401 from the backend: the session is no longer valid, so go back to login.
+  // 3. Supabase rejected the session: it is no longer valid, so go back to login.
   useEffect(() => {
     const onExpired = (e: Event) => {
       const detail = (e as CustomEvent<string>).detail

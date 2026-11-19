@@ -30,7 +30,7 @@ export const AppContext = createContext<AppContextValue | null>(null)
 /**
  * loading    = checking the session / loading the profile
  * signed_out = no session (show the login page)
- * error      = signed in, but the profile couldn't be loaded (e.g. backend down)
+ * error      = signed in, but the profile couldn't be loaded (e.g. Supabase unreachable)
  * ready      = signed in with a profile
  */
 export type AuthStatus = 'loading' | 'signed_out' | 'error' | 'ready'

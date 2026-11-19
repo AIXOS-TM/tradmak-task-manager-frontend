@@ -1,5 +1,5 @@
-// Shapes returned by the backend API (see backend/src/types.ts). Field names are snake_case,
-// exactly as the API sends them.
+// Shapes the pages work with (built from Supabase rows in ./rows.ts). Field names are snake_case,
+// matching the database columns.
 
 export type Priority = 'low' | 'medium' | 'high' | 'urgent'
 export type TaskStatus = 'todo' | 'in_progress' | 'done'

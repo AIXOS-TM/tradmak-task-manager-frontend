@@ -12,7 +12,7 @@ interface Props {
   onAdded: (id: string) => void
 }
 
-/** POST /tasks/personal: a private task assigned to the current user. */
+/** api.createPersonalTask: a private task assigned to the current user. */
 export default function AddPersonalTaskModal({ onClose, onAdded }: Props) {
   const { showToast, invalidate } = useApp()
   const [title, setTitle] = useState('')
