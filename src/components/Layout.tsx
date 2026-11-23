@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
+import { chat, CHAT_READ_EVENT, useChatUpdates } from '../lib/chat'
+import { useTheme } from '../lib/theme'
 import { useApi } from '../lib/useApi'
 import { useApp, useAuth, useCurrentUser } from '../store/useApp'
 import { daysUntil, timeAgo } from '../utils/format'
@@ -12,6 +14,7 @@ const NAV: { to: string; label: string; icon: IconName; adminOnly?: boolean }[] 
   { to: '/dashboard', label: 'My tasks', icon: 'tasks' },
   { to: '/projects', label: 'Projects', icon: 'folder' },
   { to: '/meetings', label: 'Meetings', icon: 'mic' },
+  { to: '/chat', label: 'Chat', icon: 'message' },
   { to: '/team', label: 'Team', icon: 'users' },
   { to: '/admin', label: 'Admin', icon: 'shield', adminOnly: true },
   { to: '/settings', label: 'Settings', icon: 'settings' },
@@ -22,6 +25,19 @@ export default function Layout() {
   const currentUser = useCurrentUser()
   const { signOut, workspaces, joined } = useAuth()
   const { showToast } = useApp()
+  // Unread chat messages across my organizations (hidden until migration 010 is run).
+  const chatUnread = useApi(
+    () => Promise.all(workspaces.map((w) => chat.channels(w.id))).then((lists) => lists.flat().reduce((n, c) => n + (c.is_member ? c.unread_count : 0), 0)),
+    [workspaces.map((w) => w.id).join(',')],
+    workspaces.length > 0,
+    { cache: 'chat-unread', persist: true },
+  )
+  const reloadUnread = chatUnread.reload
+  useChatUpdates(() => reloadUnread(), null, 20000)
+  useEffect(() => {
+    window.addEventListener(CHAT_READ_EVENT, reloadUnread)
+    return () => window.removeEventListener(CHAT_READ_EVENT, reloadUnread)
+  }, [reloadUnread])
   const isAdminAnywhere = workspaces.some((w) => w.member_role === 'owner' || w.member_role === 'admin')
 
   // Existing users who just accepted an email invite: tell them where they are now.
@@ -33,8 +49,8 @@ export default function Layout() {
       showToast(`You joined ${names.join(', ')}`)
     }
   }, [joined, showToast])
-  const summary = useApi(() => api.summary(), [])
-  const projects = useApi(() => api.projects(), [])
+  const summary = useApi(() => api.summary(), [], true, { cache: 'summary', persist: true })
+  const projects = useApi(() => api.projects(), [], true, { cache: 'projects', persist: true })
 
   return (
     <div className={`app-shell ${navOpen ? 'nav-open' : ''}`}>
@@ -55,6 +71,11 @@ export default function Layout() {
               <Icon name={item.icon} />
               <span>{item.label}</span>
               {item.to === '/dashboard' && !!summary.data?.open && <span className="nav-count">{summary.data.open}</span>}
+              {item.to === '/chat' && !!chatUnread.data && (
+                <span className="nav-count nav-count-chat" title="Unread messages">
+                  {chatUnread.data > 99 ? '99+' : chatUnread.data}
+                </span>
+              )}
               {item.to === '/meetings' && !!summary.data?.needsReview && (
                 <span className="nav-count nav-count-ai" title="Action items need review">
                   {summary.data.needsReview}
@@ -97,6 +118,7 @@ export default function Layout() {
           </button>
           <GlobalSearch />
           <div className="topbar-actions">
+            <ThemeToggle />
             <Notifications />
             <NavLink to="/settings" className="topbar-user" aria-label="Profile settings">
               <Avatar user={currentUser} size={32} />
@@ -115,6 +137,17 @@ export default function Layout() {
   )
 }
 
+/** Quick light/dark switch in the top bar (Settings → Appearance also offers "System"). */
+function ThemeToggle() {
+  const { theme, setChoice } = useTheme()
+  const next = theme === 'dark' ? 'light' : 'dark'
+  return (
+    <button type="button" className="icon-btn" onClick={() => setChoice(next)} aria-label={`Switch to ${next} mode`} title={`Switch to ${next} mode`}>
+      <Icon name={theme === 'dark' ? 'sun' : 'moon'} />
+    </button>
+  )
+}
+
 /** Searches the current user's tasks (assigned + personal). */
 function GlobalSearch() {
   const { openTask } = useApp()
@@ -122,7 +155,7 @@ function GlobalSearch() {
   const [focused, setFocused] = useState(false)
   const q = query.trim().toLowerCase()
   // Only fetch once the user starts searching.
-  const tasks = useApi(() => api.myTasks('all'), [], focused || !!q)
+  const tasks = useApi(() => api.myTasks('all'), [], focused || !!q, { cache: 'my-tasks:all', persist: true })
   const results = q && tasks.data ? tasks.data.filter((t) => t.title.toLowerCase().includes(q)).slice(0, 6) : []
 
   return (
@@ -177,8 +210,8 @@ function Notifications() {
   const [open, setOpen] = useState(false)
   const [seenAt, setSeenAt] = useState(0)
   const ref = useRef<HTMLDivElement>(null)
-  const review = useApi(() => api.reviewItems(), [])
-  const mine = useApi(() => api.myTasks('all'), [])
+  const review = useApi(() => api.reviewItems(), [], true, { cache: 'review', persist: true })
+  const mine = useApi(() => api.myTasks('all'), [], true, { cache: 'my-tasks:all', persist: true })
 
   const items: { id: string; text: string; time: string; taskId?: string; href?: string }[] = []
   for (const r of review.data ?? []) {

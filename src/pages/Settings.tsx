@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from 'react'
 import Avatar from '../components/Avatar'
+import Icon from '../components/Icon'
 import { api, errorMessage } from '../lib/api'
+import { useTheme, type ThemeChoice } from '../lib/theme'
 import { useApp, useAuth, useCurrentUser } from '../store/useApp'
 import '../styles/settings.css'
 
@@ -124,6 +126,8 @@ export default function Settings() {
         </div>
       </form>
 
+      <Appearance />
+
       <section className="card settings-card">
         <div className="settings-card-head">
           <h2>Notifications</h2>
@@ -145,5 +149,42 @@ export default function Settings() {
         </ul>
       </section>
     </div>
+  )
+}
+
+const THEMES: { id: ThemeChoice; label: string; icon: 'sun' | 'moon' | 'monitor'; desc: string }[] = [
+  { id: 'light', label: 'Light', icon: 'sun', desc: 'Bright background' },
+  { id: 'dark', label: 'Dark', icon: 'moon', desc: 'Easier on the eyes at night' },
+  { id: 'system', label: 'System', icon: 'monitor', desc: 'Follow your device setting' },
+]
+
+/** Light / dark / system, saved on this device. */
+function Appearance() {
+  const { choice, setChoice } = useTheme()
+  return (
+    <section className="card settings-card">
+      <div className="settings-card-head">
+        <h2>Appearance</h2>
+        <p className="muted small">Saved on this device.</p>
+      </div>
+      <div className="theme-options" role="radiogroup" aria-label="Theme">
+        {THEMES.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="radio"
+            aria-checked={choice === t.id}
+            className={`theme-option ${choice === t.id ? 'active' : ''}`}
+            onClick={() => setChoice(t.id)}
+          >
+            <span className={`theme-preview theme-preview-${t.id}`}>
+              <Icon name={t.icon} size={18} />
+            </span>
+            <span className="strong">{t.label}</span>
+            <span className="muted small">{t.desc}</span>
+          </button>
+        ))}
+      </div>
+    </section>
   )
 }

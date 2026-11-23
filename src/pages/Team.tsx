@@ -19,8 +19,8 @@ export default function Team() {
   const workspaceId = selected ?? workspaces[0]?.id ?? null
   const isAdmin = canManageMembers(workspaceId)
 
-  const members = useApi(() => api.users(workspaceId), [workspaceId], !!workspaceId)
-  const projects = useApi(() => api.projects(), [])
+  const members = useApi(() => api.users(workspaceId), [workspaceId], !!workspaceId, { cache: 'team', persist: true })
+  const projects = useApi(() => api.projects(), [], true, { cache: 'projects', persist: true })
 
   const list = members.data ?? []
   const openTotal = list.reduce((n, m) => n + m.open_count, 0)

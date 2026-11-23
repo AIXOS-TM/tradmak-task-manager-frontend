@@ -6,6 +6,9 @@ import { AppProvider } from './store/AppProvider'
 import { AuthProvider } from './store/AuthProvider'
 import './index.css'
 import './styles/layout.css'
+import { initTheme } from './lib/theme'
+
+initTheme()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

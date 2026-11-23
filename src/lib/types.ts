@@ -104,9 +104,25 @@ export interface Comment {
   id: string
   task_id: string
   author_id: string
+  /** Can be empty when the comment is only attachments. */
   body: string
   created_at: string
   author: UserRef | null
+  attachments: Attachment[]
+}
+
+/** A file attached to a comment (stored privately in Supabase Storage). */
+export interface Attachment {
+  id: string
+  comment_id: string
+  file_name: string
+  mime_type: string
+  size_bytes: number
+  /** Where the file lives in the bucket (used to delete it). */
+  storage_path: string
+  uploaded_by: string | null
+  /** Short-lived signed link to open / download it (null if it couldn't be made). */
+  url: string | null
 }
 
 export interface ActionItem {

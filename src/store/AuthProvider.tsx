@@ -1,6 +1,7 @@
 import type { Session } from '@supabase/supabase-js'
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { api, AUTH_EXPIRED_EVENT, errorMessage } from '../lib/api'
+import { clearCache, readCache, resetShared, setCacheUser, writeCache } from '../lib/cache'
 import { supabase } from '../lib/supabase'
 import type { JoinedWorkspace, User, Workspace } from '../lib/types'
 import { AuthContext, type AuthContextValue, type AuthStatus, type SignUpResult } from './context'
@@ -8,11 +9,14 @@ import { AuthContext, type AuthContextValue, type AuthStatus, type SignUpResult 
 interface ProfileState {
   /** Which signed-in user this profile belongs to. */
   userId: string
-  data: { user: User; workspaces: Workspace[] } | null
+  data: Me | null
   error: string | null
   /** Organizations joined through an invite during this visit (for the Welcome page). */
   joined: JoinedWorkspace[]
 }
+
+type Me = { user: User; workspaces: Workspace[] }
+const PROFILE_CACHE = 'profile'
 
 const NOT_CONFIGURED =
   'Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in frontend/.env, then restart the dev server.'
@@ -38,7 +42,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(data.session)
       setSessionChecked(true)
     })
-    const { data } = supabase.auth.onAuthStateChange((_event, next) => setSession(next))
+    const { data } = supabase.auth.onAuthStateChange((event, next) => {
+      if (event === 'SIGNED_OUT') clearCache() // nothing of this user stays in the browser
+      setSession(next)
+    })
     return () => data.subscription.unsubscribe()
   }, [])
 
@@ -47,12 +54,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const userId = session?.user.id
   useEffect(() => {
     if (!userId) return
+    setCacheUser(userId)
+    resetShared()
     let cancelled = false
+    // Coming back: show the last known profile at once (refreshed below), so the app opens without waiting.
+    const cached = readCache<Me>(PROFILE_CACHE, true)
+    if (cached) setProfile((prev) => (prev?.userId === userId && prev.data ? prev : { userId, data: cached, error: null, joined: prev?.userId === userId ? prev.joined : [] }))
     ;(async () => {
       try {
-        // Join any organization that invited this email (magic link invites). No-op otherwise.
-        const joined = await api.acceptInvitations()
-        const me = await api.me()
+        // Join any organization that invited this email (magic link invites; usually nothing), while
+        // loading the profile at the same time. Only when something was joined is the profile loaded again.
+        const [joined, first] = await Promise.all([api.acceptInvitations(), api.me()])
+        let me: Me = first
+        if (joined.length > 0) {
+          resetShared()
+          me = await api.me()
+        }
+        writeCache(PROFILE_CACHE, me, true)
         if (!cancelled) {
           setProfile((prev) => ({ userId, data: me, error: null, joined: [...(prev?.userId === userId ? prev.joined : []), ...joined] }))
         }

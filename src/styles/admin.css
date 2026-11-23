@@ -105,11 +105,11 @@
 }
 .invite-results .ok {
   background: var(--success-soft);
-  color: #047857;
+  color: var(--success-text);
 }
 .invite-results .fail {
   background: var(--warning-soft);
-  color: #92400e;
+  color: var(--amber-text);
 }
 
 .invite-list,
@@ -166,7 +166,7 @@
 .workload-bar {
   height: 8px;
   border-radius: 999px;
-  background: #eef0f5;
+  background: var(--track);
   overflow: hidden;
 }
 .workload-bar-fill {
@@ -314,8 +314,8 @@
   justify-content: flex-end;
 }
 .role-deactivated {
-  background: #fee2e2;
-  color: #b91c1c;
+  background: var(--danger-soft-2);
+  color: var(--danger-text);
 }
 
 .row-menu {
@@ -475,8 +475,8 @@
   gap: 3px;
   padding: 1px 7px;
   border-radius: 999px;
-  background: #f3f4f6;
-  color: #4b5563;
+  background: var(--neutral-soft);
+  color: var(--neutral-text);
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
@@ -577,7 +577,7 @@
   flex-wrap: wrap;
 }
 .danger-zone {
-  border-color: #fecaca;
+  border-color: var(--danger-border);
 }
 .danger-zone h2 {
   color: var(--danger, #dc2626);

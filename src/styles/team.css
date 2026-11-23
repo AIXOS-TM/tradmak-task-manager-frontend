@@ -73,12 +73,12 @@
   height: 8px;
   border-radius: 999px;
   overflow: hidden;
-  background: #eef0f5;
+  background: var(--track);
 }
 .workload span {
   height: 100%;
 }
-.wl-todo { background: #c7cbd6; }
+.wl-todo { background: var(--wl-todo); }
 .wl-doing { background: var(--accent); }
 .wl-done { background: var(--success); }
 
@@ -137,12 +137,12 @@
   font-weight: 600;
   padding: 2px 10px;
   border-radius: 999px;
-  background: #f3f4f6;
-  color: #4b5563;
+  background: var(--neutral-soft);
+  color: var(--neutral-text);
 }
-.role-owner { background: #fef3c7; color: #92400e; }
+.role-owner { background: var(--amber-soft); color: var(--amber-text); }
 .role-admin { background: var(--accent-soft); color: var(--accent-text); }
-.role-manager { background: #ecfeff; color: #0e7490; }
+.role-manager { background: var(--cyan-soft); color: var(--cyan-text); }
 
 .team-invite-banner {
   display: flex;

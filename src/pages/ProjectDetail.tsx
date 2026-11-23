@@ -21,9 +21,9 @@ type View = 'list' | 'board'
 export default function ProjectDetail() {
   const { projectId = '' } = useParams()
   const [params, setParams] = useSearchParams()
-  const project = useApi(() => api.project(projectId), [projectId])
-  const lists = useApi(() => api.projectLists(projectId), [projectId])
-  const tasks = useApi(() => api.projectTasks(projectId), [projectId])
+  const project = useApi(() => api.project(projectId), [projectId], true, { cache: 'project', persist: true })
+  const lists = useApi(() => api.projectLists(projectId), [projectId], true, { cache: 'project-lists', persist: true })
+  const tasks = useApi(() => api.projectTasks(projectId), [projectId], true, { cache: 'project-tasks', persist: true })
   const { canManageMembers } = usePermissions()
   const { showToast, invalidate } = useApp()
   const navigate = useNavigate()

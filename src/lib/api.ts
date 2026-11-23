@@ -11,6 +11,7 @@
  * queries and joined here, so nothing depends on foreign-key names.
  */
 import type { PostgrestError } from '@supabase/supabase-js'
+import { seedShared, shared } from './cache'
 import {
   isActiveMember,
   toActionItem,
@@ -35,6 +36,7 @@ import {
 } from './rows'
 import { createMailerClient, supabase } from './supabase'
 import type {
+  Attachment,
   WorkspaceSettings,
   AdminProject,
   ActionItem,
@@ -87,7 +89,7 @@ const NOT_MANAGER_ASSIGN = 'Only workspace admins and managers can assign tasks 
 // Plumbing
 // =====================================================================
 
-function client() {
+export function client() {
   if (!supabase) {
     throw new ApiError(0, 'Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in frontend/.env.')
   }
@@ -100,14 +102,14 @@ function sessionExpired(message = 'Your session has expired. Please log in again
 }
 
 /** The signed-in user's id (getSession also refreshes an expired token). */
-async function me(): Promise<string> {
+export async function me(): Promise<string> {
   const { data } = await client().auth.getSession()
   const id = data.session?.user.id
   if (!id) throw sessionExpired('Please log in to continue.')
   return id
 }
 
-function toApiError(err: PostgrestError, what: string): ApiError {
+export function toApiError(err: PostgrestError, what: string): ApiError {
   const msg = err.message ?? ''
   if (err.code === 'PGRST301' || err.code === 'PGRST303' || /jwt/i.test(msg)) return sessionExpired()
   if (err.code === '42501') {
@@ -128,7 +130,7 @@ interface QueryResult {
 }
 
 /** Unwraps a Supabase result, turning errors into ApiError. */
-function check<T>(res: QueryResult, what: string): T {
+export function check<T>(res: QueryResult, what: string): T {
   if (res.error) throw toApiError(res.error, what)
   return res.data as T
 }
@@ -139,14 +141,14 @@ const forbidden = (message: string) => new ApiError(403, message)
 const nowIso = () => new Date().toISOString()
 
 /** Loads rows by id into a Map. Skips the query when there's nothing to load. */
-async function fetchByIds<T extends { id: string }>(table: string, ids: (string | null | undefined)[]): Promise<Map<string, T>> {
+export async function fetchByIds<T extends { id: string }>(table: string, ids: (string | null | undefined)[]): Promise<Map<string, T>> {
   const wanted = unique(ids)
   if (wanted.length === 0) return new Map()
   const rows = check<T[]>(await client().from(table).select('*').in('id', wanted), `load ${table}`)
   return new Map(rows.map((r) => [r.id, r]))
 }
 
-function refOf(profiles: Map<string, ProfileRow>, id: string | null): UserRef | null {
+export function refOf(profiles: Map<string, ProfileRow>, id: string | null): UserRef | null {
   const p = id ? profiles.get(id) : undefined
   if (!p) return null
   const u = toUser(p)
@@ -200,15 +202,22 @@ async function hydrateTasks(rows: TaskRow[]): Promise<Task[]> {
   })
 }
 
-async function hydrateProjects(rows: ProjectRow[]): Promise<Project[]> {
+/** A project row, optionally with its members already embedded (select '*, project_members(*)'). */
+type ProjectRowWithMembers = ProjectRow & { project_members?: ProjectMemberRow[] }
+
+async function hydrateProjects(rows: ProjectRowWithMembers[]): Promise<Project[]> {
   if (rows.length === 0) return []
   const ids = rows.map((r) => r.id)
   const db = client()
-  const [memberRows, taskRows] = await Promise.all([
-    db.from('project_members').select('*').in('project_id', ids).then((r) => check<ProjectMemberRow[]>(r, 'load project members')),
+  const embedded = rows.every((r) => Array.isArray(r.project_members))
+  const memberRows = embedded
+    ? rows.flatMap((r) => r.project_members ?? [])
+    : check<ProjectMemberRow[]>(await db.from('project_members').select('*').in('project_id', ids), 'load project members')
+  // Task counts and people load at the same time.
+  const [taskRows, profiles] = await Promise.all([
     db.from('tasks').select('project_id, status').in('project_id', ids).then((r) => check<Pick<TaskRow, 'project_id' | 'status'>[]>(r, 'count project tasks')),
+    fetchByIds<ProfileRow>('profiles', [...memberRows.map((m) => m.user_id), ...rows.map((r) => r.owner_id)]),
   ])
-  const profiles = await fetchByIds<ProfileRow>('profiles', [...memberRows.map((m) => m.user_id), ...rows.map((r) => r.owner_id)])
   return rows.map((r) => {
     const projectTasks = taskRows.filter((t) => t.project_id === r.id)
     const done = projectTasks.filter((t) => t.status === 'done').length
@@ -271,10 +280,18 @@ async function hydrateActionItems(rows: ActionItemRow[]): Promise<ActionItem[]> 
 // =====================================================================
 
 async function myWorkspaces(userId: string): Promise<Workspace[]> {
-  const members = check<MemberRow[]>(await client().from('members').select('*').eq('user_id', userId), 'load your workspaces').filter(
-    isActiveMember,
-  )
-  const workspaces = await fetchByIds<WorkspaceRow>('workspaces', members.map((m) => m.workspace_id))
+  // One round trip: memberships with their organization embedded (falls back to two queries).
+  const embedded = await client().from('members').select('*, workspaces(*)').eq('user_id', userId)
+  let members: MemberRow[]
+  let workspaces: Map<string, WorkspaceRow>
+  if (!embedded.error) {
+    const rows = (embedded.data as (MemberRow & { workspaces: WorkspaceRow | null })[]).filter(isActiveMember)
+    members = rows
+    workspaces = new Map(rows.filter((r) => r.workspaces).map((r) => [r.workspace_id, r.workspaces!]))
+  } else {
+    members = check<MemberRow[]>(await client().from('members').select('*').eq('user_id', userId), 'load your workspaces').filter(isActiveMember)
+    workspaces = await fetchByIds<WorkspaceRow>('workspaces', members.map((m) => m.workspace_id))
+  }
   return members
     .map((m): Workspace | null => {
       const ws = workspaces.get(m.workspace_id)
@@ -283,9 +300,16 @@ async function myWorkspaces(userId: string): Promise<Workspace[]> {
     .filter((w): w is Workspace => w !== null)
 }
 
-async function myWorkspaceIds(userId: string): Promise<string[]> {
-  const rows = check<MemberRow[]>(await client().from('members').select('*').eq('user_id', userId), 'load your workspaces')
-  return rows.filter(isActiveMember).map((r) => r.workspace_id)
+/** Which organizations I'm in. Asked by almost every page, so it is reused for a minute (reset after any change). */
+function myWorkspaceIds(userId: string): Promise<string[]> {
+  return shared(
+    `workspace-ids:${userId}`,
+    async () => {
+      const rows = check<MemberRow[]>(await client().from('members').select('*').eq('user_id', userId), 'load your workspaces')
+      return rows.filter(isActiveMember).map((r) => r.workspace_id)
+    },
+    60_000,
+  )
 }
 
 async function workspaceOwnerId(workspaceId: string): Promise<string | null> {
@@ -383,6 +407,17 @@ async function assertCanChangeMember(workspaceId: string, userId: string) {
 // Projects & lists
 // =====================================================================
 
+/** Projects in all my organizations (shared: the sidebar and the Projects page ask together). */
+async function loadProjects(uid: string, includeArchived: boolean): Promise<Project[]> {
+  const ids = await myWorkspaceIds(uid)
+  if (ids.length === 0) return []
+  // Members come embedded in the same request (falls back to a separate query if that isn't possible).
+  let res = await client().from('projects').select('*, project_members(*)').in('workspace_id', ids).order('created_at')
+  if (res.error && res.error.code !== '42501') res = await client().from('projects').select('*').in('workspace_id', ids).order('created_at')
+  const rows = check<ProjectRowWithMembers[]>(res, 'load projects')
+  return hydrateProjects(includeArchived ? rows : rows.filter((r) => r.status !== 'archived'))
+}
+
 async function getProject(id: string): Promise<Project> {
   const row = check<ProjectRow | null>(await client().from('projects').select('*').eq('id', id).maybeSingle(), 'load project')
   if (!row) throw notFound('Project')
@@ -402,7 +437,12 @@ async function listTaskLists(projectId: string): Promise<TaskList[]> {
 // Tasks
 // =====================================================================
 
-async function listTasksForAssignee(userId: string, source?: TaskSource): Promise<Task[]> {
+/** My tasks. The sidebar, the bell and the dashboard ask at the same time: they share one request. */
+function listTasksForAssignee(userId: string, source?: TaskSource): Promise<Task[]> {
+  return shared(`my-tasks:${userId}:${source ?? 'all'}`, () => loadTasksForAssignee(userId, source))
+}
+
+async function loadTasksForAssignee(userId: string, source?: TaskSource): Promise<Task[]> {
   let query = client().from('tasks').select('*').eq('assignee_id', userId)
   if (source) query = query.eq('source', source)
   const rows = check<TaskRow[]>(await query, 'load your tasks')
@@ -464,8 +504,12 @@ async function insertTask(input: NewTaskRow): Promise<Task> {
 // Meetings & AI action items
 // =====================================================================
 
-async function listReviewItems(workspaceIds: string[]): Promise<ReviewItem[]> {
-  if (workspaceIds.length === 0) return []
+function listReviewItems(workspaceIds: string[]): Promise<ReviewItem[]> {
+  if (workspaceIds.length === 0) return Promise.resolve([])
+  return shared(`review:${workspaceIds.join(',')}`, () => loadReviewItems(workspaceIds))
+}
+
+async function loadReviewItems(workspaceIds: string[]): Promise<ReviewItem[]> {
   const meetingRows = check<MeetingRow[]>(await client().from('meetings').select('*').in('workspace_id', workspaceIds), 'load meetings')
   if (meetingRows.length === 0) return []
   const meetings = new Map(meetingRows.map((m) => [m.id, toMeeting(m)]))
@@ -576,6 +620,92 @@ function toCsv(header: string[], rows: string[][]): string {
 }
 
 // =====================================================================
+// Comment attachments (Supabase Storage, private bucket; database/migrations/009)
+// =====================================================================
+
+export const ATTACHMENT_BUCKET = 'taskapp-attachments'
+export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+export const MAX_ATTACHMENTS_PER_COMMENT = 5
+/** How long a download link works. */
+const ATTACHMENT_LINK_SECONDS = 60 * 60
+
+interface AttachmentRow {
+  id: string
+  comment_id: string
+  task_id: string
+  uploaded_by: string | null
+  file_name: string
+  storage_path: string
+  mime_type: string
+  size_bytes: number
+  created_at: string
+}
+
+/** Keeps file names readable but safe as a storage path. */
+function safeFileName(name: string): string {
+  const cleaned = name.normalize('NFKD').replace(/[^\w.\- ]+/g, '').replace(/\s+/g, '-').slice(-100)
+  return cleaned.replace(/^[.-]+/, '') || 'file'
+}
+
+/** Attachments of the given tasks, grouped by comment, with signed download links. */
+async function loadAttachments(taskIds: string[]): Promise<Map<string, Attachment[]>> {
+  const byComment = new Map<string, Attachment[]>()
+  if (taskIds.length === 0) return byComment
+  const res = await client().from('comment_attachments').select('*').in('task_id', taskIds).order('created_at')
+  if (res.error) return byComment // table missing before migration 009: comments just show without files
+  const rows = (res.data ?? []) as AttachmentRow[]
+  if (rows.length === 0) return byComment
+
+  const signed = await client()
+    .storage.from(ATTACHMENT_BUCKET)
+    .createSignedUrls(rows.map((r) => r.storage_path), ATTACHMENT_LINK_SECONDS)
+  const urls = new Map((signed.data ?? []).map((s) => [s.path, s.signedUrl]))
+
+  for (const r of rows) {
+    const list = byComment.get(r.comment_id) ?? []
+    list.push({
+      id: r.id,
+      comment_id: r.comment_id,
+      file_name: r.file_name,
+      mime_type: r.mime_type,
+      size_bytes: Number(r.size_bytes),
+      storage_path: r.storage_path,
+      uploaded_by: r.uploaded_by,
+      url: urls.get(r.storage_path) ?? null,
+    })
+    byComment.set(r.comment_id, list)
+  }
+  return byComment
+}
+
+/** Storage paths of every file attached to these tasks (collected before the tasks are deleted). */
+async function attachmentPaths(taskIds: string[]): Promise<string[]> {
+  if (taskIds.length === 0) return []
+  const res = await client().from('comment_attachments').select('storage_path').in('task_id', taskIds)
+  return res.error ? [] : ((res.data ?? []) as { storage_path: string }[]).map((r) => r.storage_path)
+}
+
+/** Best effort: removes files whose task is gone. A leftover file is harmless, so errors are ignored. */
+async function removeFiles(paths: string[]) {
+  for (let i = 0; i < paths.length; i += 100) {
+    await client().storage.from(ATTACHMENT_BUCKET).remove(paths.slice(i, i + 100))
+  }
+}
+
+function checkAttachment(file: File): string | null {
+  if (file.size > MAX_ATTACHMENT_BYTES) return `${file.name} is larger than 10 MB.`
+  if (file.size === 0) return `${file.name} is empty.`
+  return null
+}
+
+function uploadErrorMessage(file: File, message: string): string {
+  if (/mime|type.*not supported|invalid.*type/i.test(message)) return `${file.name}: this file type isn't allowed.`
+  if (/size|too large|exceed/i.test(message)) return `${file.name} is larger than 10 MB.`
+  if (/bucket not found/i.test(message)) return 'Attachments need a database update. Run database/migrations/009_comment_attachments.sql in the Supabase SQL Editor.'
+  return `${file.name}: ${message}`
+}
+
+// =====================================================================
 // Public API used by the pages
 // =====================================================================
 
@@ -584,9 +714,12 @@ export const api = {
 
   async me(): Promise<{ user: User; workspaces: Workspace[] }> {
     const uid = await me()
-    const row = check<ProfileRow | null>(await client().from('profiles').select('*').eq('id', uid).maybeSingle(), 'load your profile')
+    const [res, workspaces] = await Promise.all([client().from('profiles').select('*').eq('id', uid).maybeSingle(), myWorkspaces(uid)])
+    // Pages ask "which organizations am I in?" next: answer from here instead of asking the server again.
+    seedShared(`workspace-ids:${uid}`, workspaces.map((w) => w.id))
+    const row = check<ProfileRow | null>(res, 'load your profile')
     if (!row) throw new ApiError(404, 'Your profile was not found. Ask an admin to check the taskapp signup trigger.')
-    return { user: toUser(row), workspaces: await myWorkspaces(uid) }
+    return { user: toUser(row), workspaces }
   },
 
   /** "role" is the job title shown in the UI. */
@@ -653,16 +786,12 @@ export const api = {
 
   /** Projects in all my organizations. Archived ones are left out unless asked for. */
   async projects({ includeArchived = false } = {}): Promise<Project[]> {
-    const ids = await myWorkspaceIds(await me())
-    if (ids.length === 0) return []
-    const rows = check<ProjectRow[]>(
-      await client().from('projects').select('*').in('workspace_id', ids).order('created_at'),
-      'load projects',
-    )
-    return hydrateProjects(includeArchived ? rows : rows.filter((r) => r.status !== 'archived'))
+    const uid = await me()
+    return shared(`projects:${uid}:${includeArchived}`, () => loadProjects(uid, includeArchived))
   },
 
   project: (id: string) => getProject(id),
+
   projectLists: (id: string) => listTaskLists(id),
 
   /** workspace_id defaults to the first workspace where the user may create projects. The creator becomes the owner. */
@@ -686,37 +815,41 @@ export const api = {
     }
 
     const db = client()
-    const row = check<ProjectRow>(
-      await db
-        .from('projects')
-        .insert({
-          workspace_id: workspaceId,
-          name: body.name.trim(),
-          description: body.description ?? '',
-          color: body.color ?? '#4f46e5',
-          health: body.status ?? 'on_track',
-          end_date: body.due_date ?? null,
-          owner_id: uid,
-        })
-        .select('*')
-        .single(),
+    // The id is made here and the insert asks for nothing back: the "who can see a project" rule
+    // (migration 007) looks the project up by id, and a row isn't visible to that lookup inside
+    // its own INSERT statement, so INSERT … RETURNING would be refused. We read it back afterwards.
+    const projectId = crypto.randomUUID()
+    check(
+      await db.from('projects').insert({
+        id: projectId,
+        workspace_id: workspaceId,
+        name: body.name.trim(),
+        description: body.description ?? '',
+        color: body.color ?? '#4f46e5',
+        health: body.status ?? 'on_track',
+        end_date: body.due_date ?? null,
+        owner_id: uid,
+      }),
       'create projects',
     )
-    check(await db.from('project_members').insert({ project_id: row.id, user_id: uid }), 'add you to the project')
+    check(await db.from('project_members').insert({ project_id: projectId, user_id: uid }), 'add you to the project')
     // Every new project starts with the organization's default lists (Admin → Settings), or "General".
     const ws = check<WorkspaceRow | null>(await db.from('workspaces').select('*').eq('id', workspaceId).maybeSingle(), 'load the organization')
     const listNames = ws?.default_lists?.length ? ws.default_lists : ['General']
     check(
-      await db.from('task_lists').insert(listNames.map((name, position) => ({ project_id: row.id, name, position }))),
+      await db.from('task_lists').insert(listNames.map((name, position) => ({ project_id: projectId, name, position }))),
       'create the default lists',
     )
-    return (await hydrateProjects([row]))[0]
+    return getProject(projectId)
   },
 
   /** Admins/owners only. Its lists, tasks and comments go with it. */
   async deleteProject(id: string): Promise<void> {
+    const taskIds = check<{ id: string }[]>(await client().from('tasks').select('id').eq('project_id', id), 'load project tasks').map((t) => t.id)
+    const files = await attachmentPaths(taskIds)
     const rows = check<{ id: string }[]>(await client().from('projects').delete().eq('id', id).select('id'), 'delete projects')
     if (rows.length === 0) throw forbidden('Only workspace admins can delete projects.')
+    await removeFiles(files)
   },
 
   // ---------- Tasks ----------
@@ -845,10 +978,11 @@ export const api = {
     const db = client()
     const row = check<TaskRow | null>(await db.from('tasks').select('*').eq('id', id).maybeSingle(), 'load task')
     if (!row) throw notFound('Task')
+    const files = await attachmentPaths([id])
     // Comments and subtasks cascade in the database; action items lose their link.
     const deleted = check<{ id: string }[]>(await db.from('tasks').delete().eq('id', id).select('id'), 'delete this task')
     if (deleted.length === 0) throw forbidden('You can only delete tasks you created.')
-    await savePositions(await loadColumn(row))
+    await Promise.all([savePositions(await loadColumn(row)), removeFiles(files)])
   },
 
   // ---------- Comments ----------
@@ -858,18 +992,64 @@ export const api = {
       await client().from('comments').select('*').eq('task_id', taskId).order('created_at'),
       'load comments',
     )
-    const profiles = await fetchByIds<ProfileRow>('profiles', rows.map((r) => r.user_id))
-    return rows.map((r) => ({ ...toComment(r), author: refOf(profiles, r.user_id) }))
+    const [profiles, files] = await Promise.all([fetchByIds<ProfileRow>('profiles', rows.map((r) => r.user_id)), loadAttachments([taskId])])
+    return rows.map((r) => ({ ...toComment(r), author: refOf(profiles, r.user_id), attachments: files.get(r.id) ?? [] }))
   },
 
-  async addComment(taskId: string, body: string): Promise<Comment> {
+  /**
+   * Posts a comment, optionally with files (up to 5, 10 MB each). The text can be empty when files
+   * are attached. If some files fail to upload, the comment is still posted and the error says which.
+   */
+  async addComment(taskId: string, body: string, files: File[] = []): Promise<Comment> {
     const uid = await me()
+    const text = body.trim()
+    if (!text && files.length === 0) throw new ApiError(400, 'Write something or attach a file.')
+    if (files.length > MAX_ATTACHMENTS_PER_COMMENT) throw new ApiError(400, `Attach at most ${MAX_ATTACHMENTS_PER_COMMENT} files per comment.`)
+    const tooBig = files.map(checkAttachment).find(Boolean)
+    if (tooBig) throw new ApiError(400, tooBig)
+
     const row = check<CommentRow>(
-      await client().from('comments').insert({ task_id: taskId, user_id: uid, body: body.trim() }).select('*').single(),
+      await client().from('comments').insert({ task_id: taskId, user_id: uid, body: text }).select('*').single(),
       'comment on this task',
     )
-    const profiles = await fetchByIds<ProfileRow>('profiles', [uid])
-    return { ...toComment(row), author: refOf(profiles, uid) }
+
+    const failed: string[] = []
+    for (const file of files) {
+      const path = `${taskId}/${row.id}/${crypto.randomUUID().slice(0, 8)}-${safeFileName(file.name)}`
+      const contentType = file.type || 'application/octet-stream'
+      const up = await client().storage.from(ATTACHMENT_BUCKET).upload(path, file, { contentType, upsert: false })
+      if (up.error) {
+        failed.push(uploadErrorMessage(file, up.error.message))
+        continue
+      }
+      const rec = await client().from('comment_attachments').insert({
+        comment_id: row.id,
+        task_id: taskId,
+        uploaded_by: uid,
+        file_name: file.name.slice(0, 255),
+        storage_path: path,
+        mime_type: contentType,
+        size_bytes: file.size,
+      })
+      if (rec.error) {
+        await client().storage.from(ATTACHMENT_BUCKET).remove([path]) // don't leave an unlisted file behind
+        failed.push(uploadErrorMessage(file, toApiError(rec.error, 'attach files').message))
+      }
+    }
+    if (failed.length) throw new ApiError(207, `Comment posted, but some files weren't attached. ${failed.join(' ')}`)
+
+    const [profiles, attached] = await Promise.all([fetchByIds<ProfileRow>('profiles', [uid]), loadAttachments([taskId])])
+    return { ...toComment(row), author: refOf(profiles, uid), attachments: attached.get(row.id) ?? [] }
+  },
+
+  /** Removes one attachment (uploader, project admins/managers, or the owner of a personal task). */
+  async deleteAttachment(attachment: Attachment): Promise<void> {
+    const rows = check<{ id: string }[]>(
+      await client().from('comment_attachments').delete().eq('id', attachment.id).select('id'),
+      'remove this file',
+    )
+    if (rows.length === 0) throw forbidden('Only the person who uploaded it, or an admin or manager, can remove this file.')
+    await removeFiles([attachment.storage_path])
   },
 
   // ---------- Meetings & AI review ----------

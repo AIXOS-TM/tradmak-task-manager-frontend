@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type DependencyList } from 'react'
 import { useApp } from '../store/useApp'
 import { errorMessage } from './api'
+import { readCache, resetShared, writeCache } from './cache'
 
 export interface ApiState<T> {
   data: T | undefined
@@ -19,20 +20,37 @@ interface Result<T> {
   error: string | null
 }
 
+export interface ApiOptions {
+  /**
+   * Remember the last result under this name: when the page is opened again it shows at once
+   * and is refreshed in the background. The deps are added to the name automatically.
+   */
+  cache?: string
+  /** Also keep it across reloads (localStorage, per user, removed on sign-out). */
+  persist?: boolean
+}
+
 /**
  * Loads data from the API and keeps loading / error / data state.
  * Refetches when `deps` change, when reload() is called, or after any invalidate() in the app.
  * Pass enabled=false to skip the request (e.g. when it isn't needed yet).
  * `deps` should be simple values (ids, strings).
  */
-export function useApi<T>(fetcher: () => Promise<T>, deps: DependencyList, enabled = true): ApiState<T> {
+export function useApi<T>(fetcher: () => Promise<T>, deps: DependencyList, enabled = true, options: ApiOptions = {}): ApiState<T> {
   const { version } = useApp()
   const [nonce, setNonce] = useState(0)
-  const [result, setResult] = useState<Result<T>>({ key: '', depsKey: '', data: undefined, error: null })
-
   // depsKey = what is being loaded (e.g. which project). key = one request; when it changes, a new request starts.
   const depsKey = deps.map(String).join('|')
   const key = `${version}|${nonce}|${depsKey}`
+  const cacheKey = options.cache ? `${options.cache}|${depsKey}` : null
+  const persist = !!options.persist
+  // Start from what this page showed last time (if cached); it's refreshed right away.
+  const [result, setResult] = useState<Result<T>>(() => ({
+    key: '',
+    depsKey,
+    data: cacheKey && enabled ? readCache<T>(cacheKey, persist) : undefined,
+    error: null,
+  }))
 
   const fetcherRef = useRef(fetcher)
   useEffect(() => {
@@ -44,29 +62,45 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: DependencyList, enabl
     let cancelled = false
     fetcherRef.current().then(
       (data) => {
+        if (cacheKey) writeCache(cacheKey, data, persist)
         if (!cancelled) setResult({ key, depsKey, data, error: null })
       },
       (err: unknown) => {
         // Keep the last good data for the same thing, so a failed refresh doesn't blank the page.
         if (!cancelled)
-          setResult((prev) => ({ key, depsKey, data: prev.depsKey === depsKey ? prev.data : undefined, error: errorMessage(err) }))
+          setResult((prev) => ({
+            key,
+            depsKey,
+            data: prev.depsKey === depsKey ? prev.data : cacheKey ? readCache<T>(cacheKey, persist) : undefined,
+            error: errorMessage(err),
+          }))
       },
     )
     return () => {
       cancelled = true
     }
-  }, [key, depsKey, enabled])
+  }, [key, depsKey, enabled, cacheKey, persist])
 
-  const reload = useCallback(() => setNonce((n) => n + 1), [])
+  // An explicit reload always asks the server (never a shared / reused result).
+  const reload = useCallback(() => {
+    resetShared()
+    setNonce((n) => n + 1)
+  }, [])
   const setData = useCallback(
-    (update: (current: T | undefined) => T | undefined) => setResult((prev) => ({ ...prev, data: update(prev.data) })),
-    [],
+    (update: (current: T | undefined) => T | undefined) =>
+      setResult((prev) => {
+        const data = update(prev.data)
+        if (cacheKey && prev.depsKey === depsKey) writeCache(cacheKey, data, persist)
+        return { ...prev, data }
+      }),
+    [cacheKey, depsKey, persist],
   )
 
-  // Data loaded for a different id (e.g. the previous project) is never shown.
+  // Switched to something else (e.g. another project): show its cached copy until it arrives.
   const current = result.depsKey === depsKey
+  const cached = !current && cacheKey && enabled ? readCache<T>(cacheKey, persist) : undefined
   return {
-    data: current ? result.data : undefined,
+    data: current ? result.data : cached,
     error: current ? result.error : null,
     loading: enabled && result.key !== key,
     reload,
