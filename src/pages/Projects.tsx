@@ -17,7 +17,7 @@ type Filter = 'all' | ProjectStatus
 const FILTERS: Filter[] = ['all', 'on_track', 'at_risk', 'on_hold', 'completed']
 
 export default function Projects() {
-  const projects = useApi(() => api.projects(), [])
+  const projects = useApi(() => api.projects(), [], true, { cache: 'projects', persist: true })
   const [filter, setFilter] = useState<Filter>('all')
   const [showNew, setShowNew] = useState(false)
   const { projectWorkspaces } = usePermissions()

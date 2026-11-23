@@ -1,4 +1,5 @@
 import { useCallback, useState, type ReactNode } from 'react'
+import { resetShared } from '../lib/cache'
 import { AppContext, type AppContextValue, type Toast } from './context'
 
 /** UI state only (open task panel, toasts, refresh counter). All data comes from the API. */
@@ -14,7 +15,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [],
   )
   const dismissToast = useCallback(() => setToast(null), [])
-  const invalidate = useCallback(() => setVersion((v) => v + 1), [])
+  // Something changed: shared / reused reads must go to the server again.
+  const invalidate = useCallback(() => {
+    resetShared()
+    setVersion((v) => v + 1)
+  }, [])
 
   const value: AppContextValue = {
     selectedTaskId,

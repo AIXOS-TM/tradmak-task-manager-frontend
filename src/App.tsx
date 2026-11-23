@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import Layout from './components/Layout'
 import RequireAuth from './components/RequireAuth'
 import Admin from './pages/Admin'
+import Chat from './pages/Chat'
 import Dashboard from './pages/Dashboard'
 import Login from './pages/Login'
 import Meetings from './pages/Meetings'
@@ -32,6 +33,8 @@ function App() {
         <Route path="/projects/:projectId" element={<ProjectDetail />} />
         <Route path="/meetings" element={<Meetings />} />
         <Route path="/meetings/:meetingId" element={<Meetings />} />
+        <Route path="/chat" element={<Chat />} />
+        <Route path="/chat/:channelId" element={<Chat />} />
         <Route path="/team" element={<Team />} />
         <Route path="/admin" element={<Admin />} />
         <Route path="/settings" element={<Settings />} />

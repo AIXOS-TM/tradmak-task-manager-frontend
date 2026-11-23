@@ -1,12 +1,13 @@
-import { useEffect, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type FormEvent, type KeyboardEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, errorMessage } from '../lib/api'
+import { ApiError, api, errorMessage, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_COMMENT } from '../lib/api'
 import { usePermissions } from '../lib/permissions'
-import type { Priority, Task, TaskPatch, TaskStatus } from '../lib/types'
+import type { Attachment, Priority, Task, TaskPatch, TaskStatus } from '../lib/types'
 import { useApi } from '../lib/useApi'
 import { useApp, useCurrentUser } from '../store/useApp'
 import { formatDue, formatShortDate, timeAgo } from '../utils/format'
 import { PRIORITY_LABELS, PRIORITY_ORDER, STATUS_LABELS, STATUS_ORDER } from '../utils/labels'
+import { AttachmentList, PendingFiles } from './Attachments'
 import Avatar from './Avatar'
 import { DueDate } from './Badges'
 import Icon from './Icon'
@@ -32,7 +33,7 @@ export default function TaskPanel() {
 
 function TaskPanelShell({ taskId }: { taskId: string }) {
   const { closeTask } = useApp()
-  const task = useApi(() => api.task(taskId), [taskId])
+  const task = useApi(() => api.task(taskId), [taskId], true, { cache: 'task' })
 
   return (
     <>
@@ -63,6 +64,9 @@ function TaskPanelContent({ task, onSaved }: { task: Task; onSaved: (task: Task)
   const currentUser = useCurrentUser()
   const navigate = useNavigate()
   const [draft, setDraft] = useState('')
+  const [files, setFiles] = useState<File[]>([])
+  const [dragging, setDragging] = useState(false)
+  const fileInput = useRef<HTMLInputElement>(null)
   const [posting, setPosting] = useState(false)
   const [saving, setSaving] = useState(false)
 
@@ -88,22 +92,59 @@ function TaskPanelContent({ task, onSaved }: { task: Task; onSaved: (task: Task)
     }
   }
 
+  /** Adds picked / dropped / pasted files, skipping ones that are too big or over the limit. */
+  const addFiles = (incoming: FileList | File[]) => {
+    const list = Array.from(incoming)
+    if (list.length === 0) return
+    const tooBig = list.filter((f) => f.size > MAX_ATTACHMENT_BYTES)
+    const ok = list.filter((f) => f.size <= MAX_ATTACHMENT_BYTES && f.size > 0)
+    const room = MAX_ATTACHMENTS_PER_COMMENT - files.length
+    if (tooBig.length) showToast(`${tooBig.map((f) => f.name).join(', ')}: larger than 10 MB`, 'error')
+    else if (ok.length > room) showToast(`You can attach up to ${MAX_ATTACHMENTS_PER_COMMENT} files per comment`, 'error')
+    setFiles((current) => [...current, ...ok.slice(0, Math.max(0, room))])
+  }
+
+  // Screenshots pasted into the comment box become attachments.
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const pasted = Array.from(e.clipboardData.files)
+    if (pasted.length) {
+      e.preventDefault()
+      addFiles(pasted.map((f, i) => (f.name && f.name !== 'image.png' ? f : new File([f], `screenshot-${Date.now()}-${i + 1}.png`, { type: f.type }))))
+    }
+  }
+
+  const onDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    setDragging(false)
+    addFiles(e.dataTransfer.files)
+  }
+
   const submitComment = async (e?: FormEvent) => {
     e?.preventDefault()
     const text = draft.trim()
-    if (!text || posting) return
+    if ((!text && files.length === 0) || posting) return
     setPosting(true)
     try {
-      await api.addComment(task.id, text)
+      await api.addComment(task.id, text, files)
       setDraft('')
-      comments.reload()
-      invalidate()
+      setFiles([])
     } catch (err) {
+      // 207: the comment was posted but some files failed; clear the box and say which.
+      if (err instanceof ApiError && err.status === 207) {
+        setDraft('')
+        setFiles([])
+      }
       showToast(errorMessage(err), 'error')
     } finally {
+      comments.reload()
+      invalidate()
       setPosting(false)
     }
   }
+
+  // Uploader, admins/managers of the task's organization, or the owner of a personal task.
+  const canDeleteAttachment = (a: Attachment) =>
+    a.uploaded_by === currentUser.id || (isPersonal ? task.assignee_id === currentUser.id : perms.canManageWork(task.workspace_id))
 
   const onDraftKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -313,7 +354,13 @@ function TaskPanelContent({ task, onSaved }: { task: Task; onSaved: (task: Task)
                       <strong>{c.author?.name ?? 'Deleted user'}</strong>
                       <span className="muted small">{timeAgo(c.created_at)}</span>
                     </div>
-                    <p>{c.body}</p>
+                    {c.body && <p>{c.body}</p>}
+                    <AttachmentList
+                      attachments={c.attachments}
+                      canDelete={canDeleteAttachment}
+                      onChanged={() => comments.reload()}
+                      onError={(m) => showToast(m, 'error')}
+                    />
                   </div>
                 </li>
               ))}
@@ -322,20 +369,52 @@ function TaskPanelContent({ task, onSaved }: { task: Task; onSaved: (task: Task)
 
           <form className="comment-form" onSubmit={submitComment}>
             <Avatar user={currentUser} size={30} />
-            <div className="comment-input">
+            <div
+              className={`comment-input ${dragging ? 'is-dragging' : ''}`}
+              onDragOver={(e) => {
+                if (e.dataTransfer.types.includes('Files')) {
+                  e.preventDefault()
+                  setDragging(true)
+                }
+              }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={onDrop}
+            >
               <textarea
                 rows={2}
-                placeholder="Write a comment…"
+                placeholder="Write a comment… (drop or paste files here)"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={onDraftKey}
+                onPaste={onPaste}
                 disabled={posting}
                 aria-label="Write a comment"
               />
+              <PendingFiles files={files} onRemove={(i) => setFiles((f) => f.filter((_, j) => j !== i))} />
               <div className="comment-actions">
+                <button
+                  type="button"
+                  className="icon-btn attach-btn"
+                  onClick={() => fileInput.current?.click()}
+                  disabled={posting || files.length >= MAX_ATTACHMENTS_PER_COMMENT}
+                  aria-label="Attach files"
+                  title="Attach files (up to 5, 10 MB each)"
+                >
+                  <Icon name="paperclip" size={17} />
+                </button>
+                <input
+                  ref={fileInput}
+                  type="file"
+                  multiple
+                  hidden
+                  onChange={(e) => {
+                    if (e.target.files) addFiles(e.target.files)
+                    e.target.value = '' // allow picking the same file again
+                  }}
+                />
                 <span className="muted small hide-sm">Enter to send · Shift + Enter for a new line</span>
-                <button type="submit" className="btn btn-primary btn-sm" disabled={!draft.trim() || posting}>
-                  {posting ? 'Sending…' : 'Comment'}
+                <button type="submit" className="btn btn-primary btn-sm" disabled={(!draft.trim() && files.length === 0) || posting}>
+                  {posting ? (files.length ? 'Uploading…' : 'Sending…') : 'Comment'}
                 </button>
               </div>
             </div>

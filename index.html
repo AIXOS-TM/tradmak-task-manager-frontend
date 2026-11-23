@@ -5,6 +5,15 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Tradmak Tasks</title>
+    <!-- Apply the saved light/dark theme before anything paints (see src/lib/theme.ts). -->
+    <script>
+      try {
+        var c = localStorage.getItem('tradmak.theme')
+        var t = c === 'light' || c === 'dark' ? c : matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+        document.documentElement.dataset.theme = t
+        document.documentElement.style.colorScheme = t
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

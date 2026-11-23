@@ -14,7 +14,7 @@ import '../styles/meetings.css'
 
 export default function Meetings() {
   const { meetingId } = useParams()
-  const meetings = useApi(() => api.meetings(), [])
+  const meetings = useApi(() => api.meetings(), [], true, { cache: 'meetings', persist: true })
 
   const list = meetings.data ?? []
   // No id in the URL: show the newest meeting (desktop) or just the list (mobile).
@@ -84,7 +84,7 @@ export default function Meetings() {
 }
 
 function MeetingDetail({ meetingId }: { meetingId: string }) {
-  const meeting = useApi(() => api.meeting(meetingId), [meetingId])
+  const meeting = useApi(() => api.meeting(meetingId), [meetingId], true, { cache: 'meeting' })
 
   if (meeting.error && !meeting.data) {
     return (

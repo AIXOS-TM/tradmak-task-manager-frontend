@@ -42,6 +42,135 @@
   --font: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
 
+/* Extra colour tokens (light). Every hard-coded colour in the styles goes through these,
+   so the dark theme below only has to redefine variables. */
+:root {
+  --track: #eef0f5;
+  --track-strong: #e5e7eb;
+  --neutral-soft: #f3f4f6;
+  --neutral-text: #4b5563;
+  --success-text: #047857;
+  --success-border: #a7f3d0;
+  --warning-text: #b45309;
+  --warning-border: #fde68a;
+  --danger-text: #b91c1c;
+  --danger-soft-2: #fee2e2;
+  --danger-border: #fecaca;
+  --amber-soft: #fef3c7;
+  --amber-text: #92400e;
+  --orange-soft: #fff7ed;
+  --orange-text: #c2410c;
+  --blue-soft: #eff6ff;
+  --blue-text: #1d4ed8;
+  --teal-soft: #f0fdfa;
+  --teal-text: #0f766e;
+  --cyan-soft: #ecfeff;
+  --cyan-text: #0e7490;
+  --violet-text: #6d28d9;
+  --violet-border: #ddd6fe;
+  --violet-border-soft: #e9e5ff;
+  --violet-border-strong: #c4b5fd;
+  --ai-gradient: linear-gradient(135deg, #f5f3ff, #eef2ff);
+  --review-bg: linear-gradient(0deg, #fffdf5, #fffdf5);
+  --input-bg: #f0f1f6;
+  --topbar-bg: rgba(255, 255, 255, 0.85);
+  --glass: rgba(255, 255, 255, 0.8);
+  --hover-tint: rgba(17, 24, 39, 0.06);
+  --row-hover: #fafaff;
+  --board-col: #eceef5;
+  --border-dashed: #d4d7e2;
+  --wl-todo: #c7cbd6;
+  --muted-dot: #9ca3af;
+  --switch-track: #d4d7e2;
+  color-scheme: light;
+}
+
+/* ---------- Dark theme ---------- */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --accent: #6366f1;
+  --accent-hover: #818cf8;
+  --accent-soft: rgba(99, 102, 241, 0.16);
+  --accent-soft-2: rgba(99, 102, 241, 0.26);
+  --accent-text: #a5b4fc;
+
+  --bg: #0d0f1a;
+  --surface: #161927;
+  --surface-2: #1b1f30;
+  --surface-hover: #20243a;
+  --border: #272b40;
+  --border-strong: #363b55;
+
+  --text: #e6e8f2;
+  --text-2: #a9aec4;
+  --text-3: #767b95;
+
+  --success: #34d399;
+  --success-soft: rgba(16, 185, 129, 0.14);
+  --warning: #fbbf24;
+  --warning-soft: rgba(245, 158, 11, 0.14);
+  --danger: #f87171;
+  --danger-soft: rgba(239, 68, 68, 0.14);
+  --violet: #a78bfa;
+  --violet-soft: rgba(139, 92, 246, 0.16);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.35), 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 6px 16px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 20px 40px rgba(0, 0, 0, 0.6);
+
+  --track: #262a3e;
+  --track-strong: #2c3047;
+  --neutral-soft: rgba(148, 163, 184, 0.14);
+  --neutral-text: #cbd5e1;
+  --success-text: #6ee7b7;
+  --success-border: rgba(16, 185, 129, 0.35);
+  --warning-text: #fcd34d;
+  --warning-border: rgba(245, 158, 11, 0.4);
+  --danger-text: #fca5a5;
+  --danger-soft-2: rgba(239, 68, 68, 0.2);
+  --danger-border: rgba(239, 68, 68, 0.4);
+  --amber-soft: rgba(245, 158, 11, 0.16);
+  --amber-text: #fcd34d;
+  --orange-soft: rgba(249, 115, 22, 0.15);
+  --orange-text: #fdba74;
+  --blue-soft: rgba(59, 130, 246, 0.16);
+  --blue-text: #93c5fd;
+  --teal-soft: rgba(20, 184, 166, 0.15);
+  --teal-text: #5eead4;
+  --cyan-soft: rgba(6, 182, 212, 0.15);
+  --cyan-text: #67e8f9;
+  --violet-text: #c4b5fd;
+  --violet-border: rgba(139, 92, 246, 0.35);
+  --violet-border-soft: rgba(139, 92, 246, 0.25);
+  --violet-border-strong: rgba(139, 92, 246, 0.55);
+  --ai-gradient: linear-gradient(135deg, rgba(139, 92, 246, 0.14), rgba(99, 102, 241, 0.1));
+  --review-bg: linear-gradient(0deg, rgba(245, 158, 11, 0.07), rgba(245, 158, 11, 0.07));
+  --input-bg: #1b1f30;
+  --topbar-bg: rgba(22, 25, 39, 0.85);
+  --glass: rgba(22, 25, 39, 0.8);
+  --hover-tint: rgba(255, 255, 255, 0.06);
+  --row-hover: #1c2033;
+  --board-col: #12141f;
+  --border-dashed: #3b4060;
+  --wl-todo: #4b5068;
+  --muted-dot: #6b7280;
+  --switch-track: #3b4060;
+}
+
+/* Form controls don't inherit text colour by default. */
+input,
+textarea,
+select,
+button {
+  color: inherit;
+}
+:root[data-theme='dark'] img {
+  /* soften very bright pictures a little on dark backgrounds */
+  filter: brightness(0.95);
+}
+
 /* ---------- Base ---------- */
 *,
 *::before,
@@ -298,7 +427,7 @@ ul {
   display: inline-flex;
   gap: 2px;
   padding: 3px;
-  background: #eef0f5;
+  background: var(--track);
   border-radius: var(--radius);
   max-width: 100%;
   overflow-x: auto;
@@ -331,7 +460,7 @@ ul {
   font-weight: 600;
   padding: 0 6px;
   border-radius: 999px;
-  background: rgba(17, 24, 39, 0.06);
+  background: var(--hover-tint);
   color: var(--text-2);
 }
 .segmented button.active .seg-count {
@@ -360,18 +489,18 @@ ul {
   background: currentColor;
 }
 
-.priority-urgent { background: var(--danger-soft); color: #b91c1c; }
-.priority-high { background: #fff7ed; color: #c2410c; }
-.priority-medium { background: #eff6ff; color: #1d4ed8; }
-.priority-low { background: #f3f4f6; color: #4b5563; }
+.priority-urgent { background: var(--danger-soft); color: var(--danger-text); }
+.priority-high { background: var(--orange-soft); color: var(--orange-text); }
+.priority-medium { background: var(--blue-soft); color: var(--blue-text); }
+.priority-low { background: var(--neutral-soft); color: var(--neutral-text); }
 
-.status-todo { background: #f3f4f6; color: #4b5563; }
+.status-todo { background: var(--neutral-soft); color: var(--neutral-text); }
 .status-in_progress { background: var(--accent-soft); color: var(--accent-text); }
-.status-done { background: var(--success-soft); color: #047857; }
+.status-done { background: var(--success-soft); color: var(--success-text); }
 
-.project-on_track { background: var(--success-soft); color: #047857; }
-.project-at_risk { background: var(--danger-soft); color: #b91c1c; }
-.project-on_hold { background: var(--warning-soft); color: #b45309; }
+.project-on_track { background: var(--success-soft); color: var(--success-text); }
+.project-at_risk { background: var(--danger-soft); color: var(--danger-text); }
+.project-on_hold { background: var(--warning-soft); color: var(--warning-text); }
 .project-completed { background: var(--accent-soft); color: var(--accent-text); }
 
 .count-pill {
@@ -382,7 +511,7 @@ ul {
   height: 20px;
   padding: 0 7px;
   border-radius: 999px;
-  background: #eef0f5;
+  background: var(--track);
   color: var(--text-2);
   font-size: 12px;
   font-weight: 600;
@@ -408,9 +537,9 @@ ul {
   font-size: 11.5px;
 }
 .chip-warn {
-  border-color: #fde68a;
+  border-color: var(--warning-border);
   background: var(--warning-soft);
-  color: #b45309;
+  color: var(--warning-text);
 }
 
 .due {
@@ -425,11 +554,11 @@ ul {
   color: var(--text-3);
 }
 .due-today {
-  color: #c2410c;
+  color: var(--orange-text);
   font-weight: 600;
 }
 .due-today svg {
-  color: #c2410c;
+  color: var(--orange-text);
 }
 .due-overdue {
   color: var(--danger);
@@ -455,12 +584,12 @@ ul {
   user-select: none;
 }
 .avatar-empty {
-  background: #e5e7eb;
+  background: var(--track-strong);
   color: var(--text-3);
-  border: 1px dashed #c4c8d4;
+  border: 1px dashed var(--border-dashed);
 }
 .avatar-more {
-  background: #eef0f5;
+  background: var(--track);
   color: var(--text-2);
 }
 .avatar-stack {
@@ -542,7 +671,7 @@ ul {
 .progress {
   height: 6px;
   border-radius: 999px;
-  background: #eef0f5;
+  background: var(--track);
   overflow: hidden;
 }
 .progress span {
@@ -631,8 +760,8 @@ ul {
   gap: 4px;
   padding: 1px 8px;
   border-radius: 6px;
-  background: #f0fdfa;
-  color: #0f766e;
+  background: var(--teal-soft);
+  color: var(--teal-text);
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
@@ -834,13 +963,13 @@ ul {
 }
 .form-error {
   background: var(--danger-soft);
-  border: 1px solid #fecaca;
-  color: #b91c1c;
+  border: 1px solid var(--danger-border);
+  color: var(--danger-text);
 }
 .form-info {
   background: var(--success-soft);
-  border: 1px solid #a7f3d0;
-  color: #047857;
+  border: 1px solid var(--success-border);
+  color: var(--success-text);
 }
 .textarea {
   height: auto;

@@ -127,8 +127,8 @@
 .ai-summary {
   padding: 14px 16px;
   border-radius: var(--radius);
-  background: linear-gradient(135deg, #f5f3ff, #eef2ff);
-  border: 1px solid #e9e5ff;
+  background: var(--ai-gradient);
+  border: 1px solid var(--violet-border-soft);
 }
 .ai-summary-label {
   display: inline-flex;
@@ -176,8 +176,8 @@
   transition: opacity 0.2s;
 }
 .action-item.needs-review {
-  border-color: #fcd34d;
-  background: linear-gradient(0deg, #fffdf5, #fffdf5);
+  border-color: var(--warning-border);
+  background: var(--review-bg);
 }
 .action-item.is-ignored {
   opacity: 0.55;
@@ -211,7 +211,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: #b45309;
+  color: var(--warning-text);
   font-weight: 600;
 }
 
@@ -235,7 +235,7 @@
   width: 60px;
   height: 6px;
   border-radius: 999px;
-  background: #eef0f5;
+  background: var(--track);
   overflow: hidden;
 }
 .confidence-bar span {

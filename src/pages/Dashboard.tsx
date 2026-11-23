@@ -40,10 +40,10 @@ export default function Dashboard() {
   const [busyReviewId, setBusyReviewId] = useState<string | null>(null)
   const { canManageWork } = usePermissions()
 
-  const summary = useApi(() => api.summary(), [])
-  const tasks = useApi(() => api.myTasks(source), [source])
-  const review = useApi(() => api.reviewItems(), [])
-  const meetings = useApi(() => api.meetings(), [])
+  const summary = useApi(() => api.summary(), [], true, { cache: 'summary', persist: true })
+  const tasks = useApi(() => api.myTasks(source), [source], true, { cache: 'my-tasks', persist: true })
+  const review = useApi(() => api.reviewItems(), [], true, { cache: 'review', persist: true })
+  const meetings = useApi(() => api.meetings(), [], true, { cache: 'meetings', persist: true })
 
   const s = summary.data
   const list = tasks.data ?? []

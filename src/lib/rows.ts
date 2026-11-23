@@ -210,7 +210,7 @@ export function toTask(r: TaskRow, workspaceId: string | null): TaskBase {
   }
 }
 
-export function toComment(r: CommentRow): Omit<Comment, 'author'> {
+export function toComment(r: CommentRow): Omit<Comment, 'author' | 'attachments'> {
   return { id: r.id, task_id: r.task_id, author_id: r.user_id ?? '', body: r.body, created_at: r.created_at }
 }
 
