@@ -345,12 +345,18 @@
   border-radius: var(--radius);
   background: var(--surface-2);
 }
+.chat-page .chat-composer-wrap {
+  margin: 4px 20px 16px;
+}
+.chat-page .chat-sending {
+  padding: 0 4px 4px;
+}
 .chat-page .chat-composer {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
-  gap: 8px;
-  margin: 4px 20px 16px;
-  padding: 8px 8px 8px 14px;
+  gap: 6px;
+  padding: 8px;
   border: 1px solid var(--border-strong);
   border-radius: 12px;
   background: var(--surface);
@@ -377,6 +383,157 @@
   height: 38px;
   padding: 0;
   justify-content: center;
+}
+.chat-page .chat-tool {
+  width: 38px;
+  height: 38px;
+  flex: none;
+  color: var(--text-2);
+}
+.chat-page .chat-tool:hover:not(:disabled) {
+  color: var(--accent-text);
+}
+.chat-page .chat-pending {
+  flex-basis: 100%;
+  padding: 2px 4px 4px;
+}
+.chat-page .chat-pending .pending-files {
+  margin: 0;
+}
+
+/* Recording a voice note */
+.chat-page .chat-recording {
+  align-items: center;
+  flex-wrap: nowrap;
+  border-color: var(--danger, #dc2626);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger, #dc2626) 15%, transparent);
+}
+.chat-page .chat-rec-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--danger, #dc2626);
+  animation: chat-rec-pulse 1.2s ease-in-out infinite;
+}
+@keyframes chat-rec-pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-page .chat-rec-dot {
+    animation: none;
+  }
+}
+.chat-page .chat-rec-time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  min-width: 38px;
+}
+.chat-page .chat-rec-hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Files and voice notes inside a message */
+.chat-page .chat-msg-files {
+  margin-top: 6px;
+  max-width: 460px;
+}
+.chat-page .chat-video {
+  display: block;
+  width: 100%;
+  max-height: 280px;
+  border-radius: 10px;
+  background: #000;
+}
+.chat-page .voice-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 360px;
+  padding: 6px 8px 6px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+.chat-page .voice-play {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+}
+.chat-page .voice-play:disabled {
+  opacity: 0.5;
+}
+.chat-page .voice-seek {
+  flex: 1;
+  min-width: 60px;
+  height: 4px;
+  appearance: none;
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--accent) var(--progress, 0%), var(--track) var(--progress, 0%));
+  cursor: pointer;
+}
+.chat-page .voice-seek::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.chat-page .voice-seek::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.chat-page .voice-time {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+.chat-page .voice-name {
+  max-width: 120px;
+}
+.chat-page .voice-download {
+  flex: none;
+  width: 28px;
+  height: 28px;
+}
+
+/* Dropping files on the conversation */
+.chat-page .chat-conversation {
+  position: relative;
+}
+.chat-page .chat-drop-overlay {
+  position: absolute;
+  inset: 8px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  color: var(--accent-text);
+  font-weight: 600;
+  text-align: center;
+  pointer-events: none;
 }
 
 /* Modals */
@@ -468,8 +625,11 @@
     padding-left: 12px;
     padding-right: 12px;
   }
-  .chat-page .chat-composer {
+  .chat-page .chat-composer-wrap {
     margin: 4px 12px 12px;
+  }
+  .chat-page .chat-rec-hint {
+    display: none;
   }
   .chat-page .chat-members-btn {
     padding: 0 10px;
@@ -486,4 +646,18 @@
     background: none;
     padding: 0;
   }
+}
+
+/* On the chat page, toasts sit above the message box instead of covering it. */
+body:has(.chat-page) .toast {
+  bottom: 104px;
+}
+
+/* @mentions in chat */
+.chat-page .chat-composer-wrap {
+  position: relative;
+}
+.chat-page .chat-msg.mentions-me {
+  background: color-mix(in srgb, var(--warning, #d97706) 9%, transparent);
+  box-shadow: inset 3px 0 0 var(--warning, #d97706);
 }

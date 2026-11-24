@@ -109,6 +109,8 @@ export interface Comment {
   created_at: string
   author: UserRef | null
   attachments: Attachment[]
+  /** People @mentioned in it (migration 012). */
+  mentioned: UserRef[]
 }
 
 /** A file attached to a comment (stored privately in Supabase Storage). */

@@ -99,7 +99,7 @@ export default function Dashboard() {
           <p className="muted">
             {s ? (
               <>
-                You have <strong>{s.today} tasks due today</strong>
+                You have <strong>{s.today} {s.today === 1 ? 'task' : 'tasks'} due today</strong>
                 {s.overdue > 0 && (
                   <>
                     {' '}and <strong className="text-danger">{s.overdue} overdue</strong>

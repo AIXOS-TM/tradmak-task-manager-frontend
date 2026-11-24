@@ -992,15 +992,24 @@ export const api = {
       await client().from('comments').select('*').eq('task_id', taskId).order('created_at'),
       'load comments',
     )
-    const [profiles, files] = await Promise.all([fetchByIds<ProfileRow>('profiles', rows.map((r) => r.user_id)), loadAttachments([taskId])])
-    return rows.map((r) => ({ ...toComment(r), author: refOf(profiles, r.user_id), attachments: files.get(r.id) ?? [] }))
+    const [profiles, files] = await Promise.all([
+      fetchByIds<ProfileRow>('profiles', rows.flatMap((r) => [r.user_id, ...(r.mentions ?? [])])),
+      loadAttachments([taskId]),
+    ])
+    return rows.map((r) => ({
+      ...toComment(r),
+      author: refOf(profiles, r.user_id),
+      attachments: files.get(r.id) ?? [],
+      mentioned: (r.mentions ?? []).map((id) => refOf(profiles, id)).filter((u): u is UserRef => u !== null),
+    }))
   },
 
   /**
    * Posts a comment, optionally with files (up to 5, 10 MB each). The text can be empty when files
    * are attached. If some files fail to upload, the comment is still posted and the error says which.
    */
-  async addComment(taskId: string, body: string, files: File[] = []): Promise<Comment> {
+  /** `mentions`: ids of @mentioned people (they get a notification, migration 012). */
+  async addComment(taskId: string, body: string, files: File[] = [], mentions: string[] = []): Promise<Comment> {
     const uid = await me()
     const text = body.trim()
     if (!text && files.length === 0) throw new ApiError(400, 'Write something or attach a file.')
@@ -1008,10 +1017,17 @@ export const api = {
     const tooBig = files.map(checkAttachment).find(Boolean)
     if (tooBig) throw new ApiError(400, tooBig)
 
-    const row = check<CommentRow>(
-      await client().from('comments').insert({ task_id: taskId, user_id: uid, body: text }).select('*').single(),
-      'comment on this task',
-    )
+    const ids = [...new Set(mentions)]
+    // "mentions" is left out when empty, so plain comments also work before migration 012.
+    const res = await client()
+      .from('comments')
+      .insert({ task_id: taskId, user_id: uid, body: text, ...(ids.length ? { mentions: ids } : {}) })
+      .select('*')
+      .single()
+    if (res.error && ids.length && /mentions/.test(res.error.message)) {
+      throw new ApiError(500, '@mentions need a database update. Run database/migrations/012_notifications.sql in the Supabase SQL Editor.')
+    }
+    const row = check<CommentRow>(res, 'comment on this task')
 
     const failed: string[] = []
     for (const file of files) {
@@ -1038,8 +1054,13 @@ export const api = {
     }
     if (failed.length) throw new ApiError(207, `Comment posted, but some files weren't attached. ${failed.join(' ')}`)
 
-    const [profiles, attached] = await Promise.all([fetchByIds<ProfileRow>('profiles', [uid]), loadAttachments([taskId])])
-    return { ...toComment(row), author: refOf(profiles, uid), attachments: attached.get(row.id) ?? [] }
+    const [profiles, attached] = await Promise.all([fetchByIds<ProfileRow>('profiles', [uid, ...ids]), loadAttachments([taskId])])
+    return {
+      ...toComment(row),
+      author: refOf(profiles, uid),
+      attachments: attached.get(row.id) ?? [],
+      mentioned: ids.map((id) => refOf(profiles, id)).filter((u): u is UserRef => u !== null),
+    }
   },
 
   /** Removes one attachment (uploader, project admins/managers, or the owner of a personal task). */
