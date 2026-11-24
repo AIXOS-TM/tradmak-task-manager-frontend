@@ -757,3 +757,153 @@
   background: var(--accent);
   color: #fff;
 }
+
+/* ---------- Notifications (bell) ---------- */
+.notif-count {
+  position: absolute;
+  top: 3px;
+  right: 2px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 17px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.notif-menu {
+  width: 380px;
+  display: flex;
+  flex-direction: column;
+  max-height: min(560px, calc(100vh - 90px));
+}
+.notif-scroll {
+  overflow-y: auto;
+  min-height: 0;
+}
+.notif-item {
+  align-items: flex-start;
+  position: relative;
+}
+.notif-item.unread {
+  background: var(--accent-soft);
+}
+.notif-kind {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--neutral-soft);
+  color: var(--text-2);
+}
+.notif-text {
+  flex: 1;
+  min-width: 0;
+}
+.notif-title {
+  font-weight: 600;
+  color: var(--text);
+}
+.notif-body {
+  color: var(--text-2);
+  margin-top: 1px;
+}
+.notif-unread-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.notif-section {
+  padding: 10px 14px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border);
+}
+.notif-foot {
+  padding: 9px 14px;
+  border-top: 1px solid var(--border);
+}
+.notif-foot .link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ---------- @mentions ---------- */
+.mention {
+  padding: 0 2px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+.mention-me {
+  background: color-mix(in srgb, var(--warning, #d97706) 22%, transparent);
+  color: var(--text);
+}
+.comment-input {
+  position: relative;
+}
+.mention-menu {
+  position: absolute;
+  left: 8px;
+  bottom: calc(100% + 6px);
+  z-index: 30;
+  width: min(320px, calc(100% - 16px));
+  list-style: none;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.12));
+}
+.mention-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  font-size: 13px;
+}
+.mention-option .truncate {
+  min-width: 0;
+}
+.mention-option .muted {
+  margin-left: auto;
+  flex: none;
+  max-width: 45%;
+}
+.mention-option.active {
+  background: var(--accent-soft);
+}
+.mention-at {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  font-size: 12px;
+}

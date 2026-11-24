@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { api } from '../lib/api'
 import { chat, CHAT_READ_EVENT, useChatUpdates } from '../lib/chat'
+import { desktopEnabled, desktopSupported, disableDesktop, enableDesktop, notifications, NOTIFICATIONS_CHANGED, useNotificationUpdates, type AppNotification, type NotificationKind } from '../lib/notifications'
 import { useTheme } from '../lib/theme'
 import { useApi } from '../lib/useApi'
 import { useApp, useAuth, useCurrentUser } from '../store/useApp'
@@ -49,6 +50,18 @@ export default function Layout() {
       showToast(`You joined ${names.join(', ')}`)
     }
   }, [joined, showToast])
+  // Links like /dashboard?task=<id> (from notifications) open that task in the side panel.
+  const location = useLocation()
+  const navigate = useNavigate()
+  const { openTask } = useApp()
+  useEffect(() => {
+    const id = new URLSearchParams(location.search).get('task')
+    if (!id) return
+    openTask(id)
+    const params = new URLSearchParams(location.search)
+    params.delete('task')
+    navigate({ pathname: location.pathname, search: params.toString() ? `?${params}` : '' }, { replace: true })
+  }, [location.search, location.pathname, openTask, navigate])
   const summary = useApi(() => api.summary(), [], true, { cache: 'summary', persist: true })
   const projects = useApi(() => api.projects(), [], true, { cache: 'projects', persist: true })
 
@@ -203,74 +216,191 @@ function GlobalSearch() {
   )
 }
 
-/** Built from real data: AI items that need an owner, plus my overdue / due-today tasks. */
-function Notifications() {
+/** Opens an in-app notification link: tasks open in the side panel, the rest navigates. */
+function useOpenLink() {
   const { openTask } = useApp()
   const navigate = useNavigate()
+  return useCallback(
+    (link: string) => {
+      const task = /^\/dashboard\?task=([0-9a-f-]{36})$/i.exec(link)
+      if (task) openTask(task[1])
+      else if (link) navigate(link)
+    },
+    [openTask, navigate],
+  )
+}
+
+const KIND_ICON: Record<NotificationKind, IconName> = {
+  task_assigned: 'tasks',
+  task_completed: 'checkCircle',
+  task_comment: 'message',
+  comment_mention: 'user',
+  chat_mention: 'user',
+  direct_message: 'message',
+  channel_added: 'users',
+  project_added: 'folder',
+}
+
+/**
+ * The bell: notifications from the database (task assigned, comments, @mentions, direct messages,
+ * added to a channel / project; live), plus reminders built from data (overdue / due today,
+ * AI items that need an owner).
+ */
+function Notifications() {
+  const openLink = useOpenLink()
+  const { openTask, showToast } = useApp()
+  const currentUser = useCurrentUser()
+  const location = useLocation()
   const [open, setOpen] = useState(false)
-  const [seenAt, setSeenAt] = useState(0)
+  const [remindersSeen, setRemindersSeen] = useState(0)
+  const [desktop, setDesktop] = useState(desktopEnabled())
   const ref = useRef<HTMLDivElement>(null)
+  const stored = useApi(() => notifications.list(), [], true, { cache: 'notifications', persist: true })
   const review = useApi(() => api.reviewItems(), [], true, { cache: 'review', persist: true })
   const mine = useApi(() => api.myTasks('all'), [], true, { cache: 'my-tasks:all', persist: true })
+  const reloadStored = stored.reload
+  useEffect(() => {
+    window.addEventListener(NOTIFICATIONS_CHANGED, reloadStored)
+    return () => window.removeEventListener(NOTIFICATIONS_CHANGED, reloadStored)
+  }, [reloadStored])
+  const here = useRef(location.pathname)
+  useEffect(() => {
+    here.current = location.pathname
+  }, [location.pathname])
 
-  const items: { id: string; text: string; time: string; taskId?: string; href?: string }[] = []
+  useNotificationUpdates(
+    currentUser.id,
+    (n) => {
+      reloadStored()
+      // A small heads-up, unless you're already looking at that conversation.
+      if (n && document.visibilityState === 'visible' && n.link !== here.current) showToast(n.body ? `${n.title}: ${n.body}` : n.title, 'success')
+    },
+    openLink,
+  )
+
+  const reminders: { id: string; text: string; time: string; taskId?: string; href?: string }[] = []
   for (const r of review.data ?? []) {
-    items.push({ id: r.id, text: `AI found "${r.suggested_title}" in ${r.meeting.title} with no clear owner`, time: r.meeting.started_at, href: `/meetings/${r.meeting_id}` })
+    reminders.push({ id: r.id, text: `AI found "${r.suggested_title}" in ${r.meeting.title} with no clear owner`, time: r.meeting.started_at, href: `/meetings/${r.meeting_id}` })
   }
   for (const t of mine.data ?? []) {
     if (t.status === 'done' || !t.due_date) continue
     const n = daysUntil(t.due_date)
-    if (n < 0) items.push({ id: t.id, text: `"${t.title}" is overdue`, time: t.updated_at, taskId: t.id })
-    else if (n === 0) items.push({ id: t.id, text: `"${t.title}" is due today`, time: t.updated_at, taskId: t.id })
+    if (n < 0) reminders.push({ id: t.id, text: `"${t.title}" is overdue`, time: t.updated_at, taskId: t.id })
+    else if (n === 0) reminders.push({ id: t.id, text: `"${t.title}" is due today`, time: t.updated_at, taskId: t.id })
   }
-  const unread = seenAt === 0 ? items.length : 0
+  const list = stored.data ?? []
+  const unread = list.filter((n) => !n.read_at).length
+  const remindersNew = remindersSeen === 0 ? reminders.length : 0
+
+  // "(3) Tradmak Tasks" in the browser tab while something is unread.
+  useEffect(() => {
+    const base = document.title.replace(/^\(\d+\+?\)\s*/, '')
+    document.title = unread > 0 ? `(${unread > 99 ? '99+' : unread}) ${base}` : base
+  }, [unread])
 
   useEffect(() => {
     if (!open) return
     const onClick = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
     document.addEventListener('mousedown', onClick)
-    return () => document.removeEventListener('mousedown', onClick)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onClick)
+      document.removeEventListener('keydown', onKey)
+    }
   }, [open])
+
+  const markAll = async () => {
+    setRemindersSeen(Date.now())
+    stored.setData((d) => d?.map((n) => (n.read_at ? n : { ...n, read_at: new Date().toISOString() })))
+    await notifications.markAllRead().catch(() => {})
+  }
+
+  const openItem = (n: AppNotification) => {
+    setOpen(false)
+    if (!n.read_at) {
+      stored.setData((d) => d?.map((x) => (x.id === n.id ? { ...x, read_at: new Date().toISOString() } : x)))
+      void notifications.markRead([n.id]).catch(() => {})
+    }
+    openLink(n.link)
+  }
+
+  const toggleDesktop = async () => {
+    if (desktop) {
+      disableDesktop()
+      setDesktop(false)
+      return
+    }
+    const result = await enableDesktop()
+    setDesktop(result === 'granted')
+    if (result === 'denied') showToast('Notifications are blocked for this site. Allow them from the icon in the address bar.', 'error')
+    else if (result === 'unsupported') showToast("This browser doesn't support desktop notifications.", 'error')
+  }
 
   return (
     <div className="notif" ref={ref}>
-      <button type="button" className="icon-btn" onClick={() => setOpen((o) => !o)} aria-label="Notifications" aria-expanded={open}>
+      <button type="button" className="icon-btn" onClick={() => setOpen((o) => !o)} aria-label={unread ? `Notifications (${unread} unread)` : 'Notifications'} aria-expanded={open}>
         <Icon name="bell" />
-        {unread > 0 && <span className="notif-dot" />}
+        {unread > 0 ? <span className="notif-count">{unread > 99 ? '99+' : unread}</span> : remindersNew > 0 && <span className="notif-dot" />}
       </button>
       {open && (
         <div className="dropdown notif-menu">
           <div className="dropdown-head">
             <strong>Notifications</strong>
-            {unread > 0 && (
-              <button type="button" className="link-btn small" onClick={() => setSeenAt(Date.now())}>
+            {(unread > 0 || remindersNew > 0) && (
+              <button type="button" className="link-btn small" onClick={() => void markAll()}>
                 Mark all as read
               </button>
             )}
           </div>
-          {items.length === 0 ? (
-            <div className="dropdown-empty">{review.loading || mine.loading ? 'Loading…' : "You're all caught up."}</div>
-          ) : (
-            items.map((n) => (
-              <button
-                key={n.id}
-                type="button"
-                className={`notif-item ${unread ? 'unread' : ''}`}
-                onClick={() => {
-                  setOpen(false)
-                  if (n.taskId) openTask(n.taskId)
-                  else if (n.href) navigate(n.href)
-                }}
-              >
-                <span className="notif-bullet" />
-                <div>
-                  <div>{n.text}</div>
-                  <div className="muted small">{timeAgo(n.time)}</div>
-                </div>
+          <div className="notif-scroll">
+            {list.length === 0 && reminders.length === 0 ? (
+              <div className="dropdown-empty">{stored.loading || review.loading || mine.loading ? 'Loading…' : "You're all caught up."}</div>
+            ) : (
+              <>
+                {list.map((n) => (
+                  <button key={n.id} type="button" className={`notif-item ${n.read_at ? '' : 'unread'}`} onClick={() => openItem(n)}>
+                    {n.actor ? <Avatar user={n.actor} size={30} /> : <span className="notif-kind"><Icon name={KIND_ICON[n.kind] ?? 'bell'} size={15} /></span>}
+                    <div className="notif-text">
+                      <div className="notif-title">{n.title}</div>
+                      {n.body && <div className="notif-body truncate">{n.body}</div>}
+                      <div className="muted small">{timeAgo(n.created_at)}</div>
+                    </div>
+                    {!n.read_at && <span className="notif-unread-dot" aria-label="Unread" />}
+                  </button>
+                ))}
+                {reminders.length > 0 && <div className="notif-section">Reminders</div>}
+                {reminders.map((n) => (
+                  <button
+                    key={n.id}
+                    type="button"
+                    className={`notif-item ${remindersNew ? 'unread' : ''}`}
+                    onClick={() => {
+                      setOpen(false)
+                      if (n.taskId) openTask(n.taskId)
+                      else if (n.href) openLink(n.href)
+                    }}
+                  >
+                    <span className="notif-kind">
+                      <Icon name={n.taskId ? 'clock' : 'sparkles'} size={15} />
+                    </span>
+                    <div className="notif-text">
+                      <div>{n.text}</div>
+                      <div className="muted small">{timeAgo(n.time)}</div>
+                    </div>
+                  </button>
+                ))}
+              </>
+            )}
+          </div>
+          {desktopSupported() && (
+            <div className="notif-foot">
+              <button type="button" className="link-btn small" onClick={() => void toggleDesktop()}>
+                <Icon name={desktop ? 'check' : 'monitor'} size={13} /> {desktop ? 'Desktop notifications on' : 'Turn on desktop notifications'}
               </button>
-            ))
+            </div>
           )}
         </div>
       )}

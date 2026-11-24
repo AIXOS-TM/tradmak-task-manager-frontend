@@ -11,6 +11,8 @@ import { AttachmentList, PendingFiles } from './Attachments'
 import Avatar from './Avatar'
 import { DueDate } from './Badges'
 import Icon from './Icon'
+import { MentionText, useMentions } from './Mentions'
+import { notifications } from '../lib/notifications'
 import { ErrorState, LoadingState } from './States'
 
 /** Slide-in panel for the selected task. Rendered once in the layout. */
@@ -67,6 +69,7 @@ function TaskPanelContent({ task, onSaved }: { task: Task; onSaved: (task: Task)
   const [files, setFiles] = useState<File[]>([])
   const [dragging, setDragging] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
+  const commentBox = useRef<HTMLTextAreaElement>(null)
   const [posting, setPosting] = useState(false)
   const [saving, setSaving] = useState(false)
 
@@ -76,8 +79,19 @@ function TaskPanelContent({ task, onSaved }: { task: Task; onSaved: (task: Task)
   const canAssign = perms.canAssignTask(task)
   const canDelete = perms.canDeleteTask(task)
   const comments = useApi(() => api.comments(task.id), [task.id])
+  // Opening a task marks its notifications (assigned, comments, mentions) as read.
+  useEffect(() => {
+    void notifications.markReadFor({ taskId: task.id }).catch(() => {})
+  }, [task.id])
   // People who can be assigned: members of this task's workspace (only for admins/managers).
-  const members = useApi(() => api.users(task.workspace_id), [task.workspace_id], canAssign)
+  // (Also the people you can @mention in a comment.)
+  const members = useApi(() => api.users(task.workspace_id), [task.workspace_id], !!task.workspace_id)
+  const mentions = useMentions({
+    value: draft,
+    setValue: setDraft,
+    inputRef: commentBox,
+    people: (members.data ?? []).filter((m) => m.id !== currentUser.id).map((m) => ({ id: m.id, name: m.name, avatar_color: m.avatar_color, hint: m.role })),
+  })
   const locked = saving || !canEdit
 
   const save = async (patch: TaskPatch) => {
@@ -125,9 +139,10 @@ function TaskPanelContent({ task, onSaved }: { task: Task; onSaved: (task: Task)
     if ((!text && files.length === 0) || posting) return
     setPosting(true)
     try {
-      await api.addComment(task.id, text, files)
+      await api.addComment(task.id, text, files, mentions.resolve(text).ids)
       setDraft('')
       setFiles([])
+      mentions.reset()
     } catch (err) {
       // 207: the comment was posted but some files failed; clear the box and say which.
       if (err instanceof ApiError && err.status === 207) {
@@ -147,6 +162,7 @@ function TaskPanelContent({ task, onSaved }: { task: Task; onSaved: (task: Task)
     a.uploaded_by === currentUser.id || (isPersonal ? task.assignee_id === currentUser.id : perms.canManageWork(task.workspace_id))
 
   const onDraftKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mentions.onKeyDown(e)) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       void submitComment()
@@ -354,7 +370,11 @@ function TaskPanelContent({ task, onSaved }: { task: Task; onSaved: (task: Task)
                       <strong>{c.author?.name ?? 'Deleted user'}</strong>
                       <span className="muted small">{timeAgo(c.created_at)}</span>
                     </div>
-                    {c.body && <p>{c.body}</p>}
+                    {c.body && (
+                      <p>
+                        <MentionText text={c.body} names={c.mentioned.map((u) => u.name)} mine={currentUser.name} />
+                      </p>
+                    )}
                     <AttachmentList
                       attachments={c.attachments}
                       canDelete={canDeleteAttachment}
@@ -380,11 +400,18 @@ function TaskPanelContent({ task, onSaved }: { task: Task; onSaved: (task: Task)
               onDragLeave={() => setDragging(false)}
               onDrop={onDrop}
             >
+              {mentions.popup}
               <textarea
+                ref={commentBox}
                 rows={2}
-                placeholder="Write a comment… (drop or paste files here)"
+                placeholder="Write a comment… type @ to mention someone"
                 value={draft}
-                onChange={(e) => setDraft(e.target.value)}
+                onChange={(e) => {
+                  setDraft(e.target.value)
+                  mentions.sync()
+                }}
+                onClick={mentions.sync}
+                onBlur={() => window.setTimeout(mentions.sync, 150)}
                 onKeyDown={onDraftKey}
                 onPaste={onPaste}
                 disabled={posting}

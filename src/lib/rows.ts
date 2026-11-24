@@ -96,6 +96,8 @@ export interface CommentRow {
   user_id: string | null
   body: string
   created_at: string
+  /** Missing before migration 012. */
+  mentions?: string[]
 }
 
 export interface MeetingRow {
@@ -210,7 +212,7 @@ export function toTask(r: TaskRow, workspaceId: string | null): TaskBase {
   }
 }
 
-export function toComment(r: CommentRow): Omit<Comment, 'author' | 'attachments'> {
+export function toComment(r: CommentRow): Omit<Comment, 'author' | 'attachments' | 'mentioned'> {
   return { id: r.id, task_id: r.task_id, author_id: r.user_id ?? '', body: r.body, created_at: r.created_at }
 }
 

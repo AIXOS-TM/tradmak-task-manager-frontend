@@ -1,10 +1,13 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { PendingFiles } from '../components/Attachments'
 import Avatar from '../components/Avatar'
+import { ChatAttachments, formatDuration, useVoiceRecorder } from '../components/ChatMedia'
+import { MentionText, useMentions, type MentionPerson } from '../components/Mentions'
 import Icon from '../components/Icon'
 import { EmptyState, ErrorState, LoadingState } from '../components/States'
 import { api, errorMessage } from '../lib/api'
-import { chat, useChatUpdates, type Channel, type ChannelMember, type ChatMessage } from '../lib/chat'
+import { chat, checkChatFiles, MAX_CHAT_FILES, useChatUpdates, type Channel, type ChannelMember, type ChatMessage, type MessageMentions, type VoiceNote } from '../lib/chat'
 import type { Member } from '../lib/types'
 import { useApi } from '../lib/useApi'
 import { useApp, useAuth, useCurrentUser } from '../store/useApp'
@@ -198,6 +201,11 @@ function Conversation({ channel, workspaceId, onListChanged, onLeft }: { channel
   const [error, setError] = useState<string | null>(null)
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [infoOpen, setInfoOpen] = useState(false)
+  // Files dropped anywhere on the conversation go to the message box.
+  const addFilesRef = useRef<AddFiles | null>(null)
+  const [dragging, setDragging] = useState(false)
+  const canPost = channel.is_member && !channel.archived
+  const dragDepth = useRef(0)
   const scroller = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
   const canModerate = channel.kind === 'channel' && channel.my_role === 'admin'
@@ -297,7 +305,29 @@ function Conversation({ channel, workspaceId, onListChanged, onLeft }: { channel
   }
 
   return (
-    <div className="chat-conversation">
+    <div
+      className={`chat-conversation ${dragging ? 'is-dragging' : ''}`}
+      onDragEnter={(e) => {
+        if (!canPost || !e.dataTransfer.types.includes('Files')) return
+        dragDepth.current++
+        setDragging(true)
+      }}
+      onDragOver={(e) => {
+        if (canPost && e.dataTransfer.types.includes('Files')) e.preventDefault()
+      }}
+      onDragLeave={() => {
+        dragDepth.current = Math.max(0, dragDepth.current - 1)
+        if (dragDepth.current === 0) setDragging(false)
+      }}
+      onDrop={(e) => {
+        if (!canPost) return
+        e.preventDefault()
+        dragDepth.current = 0
+        setDragging(false)
+        addFilesRef.current?.([...e.dataTransfer.files])
+      }}
+    >
+      {dragging && <div className="chat-drop-overlay">Drop files to send them in {channel.kind === 'dm' ? `your chat with ${channel.name}` : `#${channel.name}`}</div>}
       <header className="chat-header">
         <button type="button" className="icon-btn chat-back" onClick={onLeft} aria-label="Back to conversations">
           <Icon name="arrowRight" size={18} className="flip" />
@@ -355,7 +385,7 @@ function Conversation({ channel, workspaceId, onListChanged, onLeft }: { channel
           </button>
         </div>
       ) : (
-        <Composer channel={channel} onSent={onSent} />
+        <Composer channel={channel} workspaceId={workspaceId} onSent={onSent} addFilesRef={addFilesRef} />
       )}
 
       {infoOpen && (
@@ -424,6 +454,8 @@ function MessageItem({
   onDeleted: (id: string) => void
 }) {
   const { showToast } = useApp()
+  const currentUser = useCurrentUser()
+  const mentionsMe = m.mention_all || m.mentioned.some((u) => u.id === currentUser.id)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(m.body)
   const [busy, setBusy] = useState(false)
@@ -433,7 +465,7 @@ function MessageItem({
     if (draft.trim() === m.body) return setEditing(false)
     setBusy(true)
     try {
-      await chat.edit(m.id, draft)
+      await chat.edit(m.id, draft, m.attachments.length > 0)
       onChanged(m.id, draft.trim())
       setEditing(false)
     } catch (err) {
@@ -447,7 +479,7 @@ function MessageItem({
     if (!window.confirm('Delete this message? This can’t be undone.')) return
     setBusy(true)
     try {
-      await chat.remove(m.id)
+      await chat.remove(m)
       onDeleted(m.id)
     } catch (err) {
       showToast(errorMessage(err), 'error')
@@ -456,7 +488,7 @@ function MessageItem({
   }
 
   return (
-    <div className={`chat-msg ${grouped ? 'grouped' : ''} ${editing ? 'editing' : ''}`}>
+    <div className={`chat-msg ${grouped ? 'grouped' : ''} ${editing ? 'editing' : ''} ${mentionsMe && !mine ? 'mentions-me' : ''}`}>
       <div className="chat-msg-gutter">{grouped ? <span className="chat-msg-time-hover">{time}</span> : <Avatar user={m.author ?? { name: 'Former member', avatar_color: '#8b92a3' }} size={34} />}</div>
       <div className="chat-msg-body">
         {!grouped && (
@@ -486,17 +518,20 @@ function MessageItem({
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(false)} disabled={busy}>
                 Cancel
               </button>
-              <button type="button" className="btn btn-primary btn-sm" onClick={() => void save()} disabled={busy || !draft.trim()}>
+              <button type="button" className="btn btn-primary btn-sm" onClick={() => void save()} disabled={busy || (!draft.trim() && m.attachments.length === 0)}>
                 Save
               </button>
             </div>
           </div>
         ) : (
-          <div className="chat-msg-text">
-            <Linkified text={m.body} />
-            {m.edited_at && <span className="muted small chat-edited"> (edited)</span>}
-          </div>
+          (m.body || m.edited_at) && (
+            <div className="chat-msg-text">
+              <MentionText text={m.body} names={m.mentioned.map((u) => u.name)} mine={currentUser.name} everyone={m.mention_all} />
+              {m.edited_at && <span className="muted small chat-edited"> (edited)</span>}
+            </div>
+          )
         )}
+        <ChatAttachments attachments={m.attachments} />
       </div>
       {!editing && (mine || canModerate) && (
         <div className="chat-msg-actions">
@@ -514,30 +549,39 @@ function MessageItem({
   )
 }
 
-/** Shows links as clickable (text stays escaped by React). */
-function Linkified({ text }: { text: string }) {
-  const parts = text.split(/(https?:\/\/[^\s<]+)/g)
-  return (
-    <>
-      {parts.map((p, i) =>
-        /^https?:\/\//.test(p) ? (
-          <a key={i} href={p} target="_blank" rel="noopener noreferrer">
-            {p}
-          </a>
-        ) : (
-          <Fragment key={i}>{p}</Fragment>
-        ),
-      )}
-    </>
-  )
-}
+/** What the conversation hands to the message box (files dropped anywhere on the conversation). */
+type AddFiles = (files: File[]) => void
 
-function Composer({ channel, onSent }: { channel: Channel; onSent: (m: ChatMessage) => void }) {
+function Composer({ channel, workspaceId, onSent, addFilesRef }: { channel: Channel; workspaceId: string; onSent: (m: ChatMessage) => void; addFilesRef: { current: AddFiles | null } }) {
   const { showToast } = useApp()
+  const currentUser = useCurrentUser()
   const [draft, setDraft] = useState('')
+  const [files, setFiles] = useState<File[]>([])
+  const [sending, setSending] = useState(0)
   const box = useRef<HTMLTextAreaElement>(null)
+  const picker = useRef<HTMLInputElement>(null)
   // Messages go out one after another (in order) while the box is already free for the next one.
   const queue = useRef<Promise<void>>(Promise.resolve())
+
+  // @mentions: people who can read this conversation (members of a private channel / DM,
+  // everyone in the organization for a public channel).
+  const everyoneCanRead = channel.kind === 'channel' && !channel.is_private
+  const people = useApi<MentionPerson[]>(
+    () =>
+      everyoneCanRead
+        ? api.users(workspaceId).then((list) => list.map((u) => ({ id: u.id, name: u.name, avatar_color: u.avatar_color, hint: u.role })))
+        : chat.members(channel.id).then((list) => list.map((u) => ({ id: u.id, name: u.name, avatar_color: u.avatar_color }))),
+    [channel.id, everyoneCanRead, workspaceId],
+    true,
+    { cache: 'mention-people' },
+  )
+  const mentions = useMentions({
+    value: draft,
+    setValue: setDraft,
+    inputRef: box,
+    people: (people.data ?? []).filter((p) => p.id !== currentUser.id),
+    allowEveryone: channel.kind === 'channel',
+  })
 
   // Grow with the text, up to a limit.
   useLayoutEffect(() => {
@@ -547,48 +591,166 @@ function Composer({ channel, onSent }: { channel: Channel; onSent: (m: ChatMessa
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`
   }, [draft])
 
-  const send = (e?: FormEvent) => {
-    e?.preventDefault()
-    const text = draft.trim()
-    if (!text) return
-    // Clear at once so typing the next message never gets wiped by this one finishing.
-    setDraft('')
-    box.current?.focus()
+  const addFiles = useCallback(
+    (incoming: File[]) => {
+      if (incoming.length === 0) return
+      setFiles((current) => {
+        const next = [...current, ...incoming]
+        const problem = checkChatFiles(next)
+        if (problem) {
+          showToast(problem, 'error')
+          return current
+        }
+        return next
+      })
+      box.current?.focus()
+    },
+    [showToast],
+  )
+  useEffect(() => {
+    addFilesRef.current = addFiles
+    return () => {
+      addFilesRef.current = null
+    }
+  }, [addFiles, addFilesRef])
+
+  /** Queues one message. On failure its text and files come back so nothing is lost. */
+  const enqueue = (text: string, attached: File[], voice?: VoiceNote, mentioned?: MessageMentions) => {
+    setSending((n) => n + 1)
     queue.current = queue.current.then(async () => {
       try {
-        onSent(await chat.send(channel.id, text))
+        onSent(await chat.send(channel.id, text, attached, voice, mentioned))
       } catch (err) {
         showToast(errorMessage(err), 'error')
-        // Not sent: give the text back (unless something new was typed meanwhile) so nothing is lost.
-        setDraft((current) => (current.trim() ? current : text))
+        if (text) setDraft((current) => (current.trim() ? current : text))
+        if (attached.length) setFiles((current) => (current.length ? current : attached))
+      } finally {
+        setSending((n) => n - 1)
       }
     })
   }
 
+  const send = (e?: FormEvent) => {
+    e?.preventDefault()
+    const text = draft.trim()
+    if (!text && files.length === 0) return
+    // Clear at once so typing the next message never gets wiped by this one finishing.
+    const mentioned = mentions.resolve(text)
+    setDraft('')
+    setFiles([])
+    mentions.reset()
+    box.current?.focus()
+    enqueue(text, files, undefined, mentioned)
+  }
+
+  const recorder = useVoiceRecorder(
+    (note) => enqueue('', [], note),
+    (message) => showToast(message, 'error'),
+  )
+
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mentions.onKeyDown(e)) return
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault()
-      void send()
+      send()
     }
   }
 
+  const hasContent = draft.trim().length > 0 || files.length > 0
+  const status = sending > 0 && <div className="chat-sending muted small">Sending…</div>
+
+  if (recorder.state === 'recording') {
+    return (
+      <div className="chat-composer-wrap">
+        {status}
+        <div className="chat-composer chat-recording" role="group" aria-label="Recording a voice message">
+          <button type="button" className="icon-btn" onClick={() => recorder.stop(false)} aria-label="Discard voice message" title="Discard">
+            <Icon name="trash" size={17} />
+          </button>
+          <span className="chat-rec-dot" aria-hidden="true" />
+          <span className="chat-rec-time">{formatDuration(recorder.elapsed)}</span>
+          <span className="muted small chat-rec-hint">Recording… press send when you’re done</span>
+          <button type="button" className="btn btn-primary chat-send" onClick={() => recorder.stop(true)} aria-label="Send voice message" title="Send">
+            <Icon name="send" size={16} />
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <form className="chat-composer" onSubmit={send}>
-      <textarea
-        ref={box}
-        rows={1}
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={onKey}
-        placeholder={channel.kind === 'dm' ? `Message ${channel.name}` : `Message #${channel.name}`}
-        maxLength={4000}
-        aria-label="Message"
-        autoFocus
-      />
-      <button type="submit" className="btn btn-primary chat-send" disabled={!draft.trim()} aria-label="Send">
-        <Icon name="send" size={16} />
-      </button>
-    </form>
+    <div className="chat-composer-wrap">
+      {mentions.popup}
+      {status}
+      <form className="chat-composer" onSubmit={send}>
+        {files.length > 0 && (
+          <div className="chat-pending">
+            <PendingFiles files={files} onRemove={(i) => setFiles((f) => f.filter((_, j) => j !== i))} />
+          </div>
+        )}
+        <button
+          type="button"
+          className="icon-btn chat-tool"
+          onClick={() => picker.current?.click()}
+          disabled={files.length >= MAX_CHAT_FILES}
+          aria-label="Attach files"
+          title={`Attach files (up to ${MAX_CHAT_FILES}, 10 MB each)`}
+        >
+          <Icon name="paperclip" size={18} />
+        </button>
+        <input
+          ref={picker}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => {
+            addFiles([...(e.target.files ?? [])])
+            e.target.value = ''
+          }}
+        />
+        <textarea
+          ref={box}
+          rows={1}
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value)
+            mentions.sync()
+          }}
+          onKeyDown={onKey}
+          onKeyUp={(e) => {
+            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Home' || e.key === 'End') mentions.sync()
+          }}
+          onClick={mentions.sync}
+          onBlur={() => window.setTimeout(mentions.sync, 150)}
+          onPaste={(e) => {
+            const pasted = [...e.clipboardData.files]
+            if (pasted.length) {
+              e.preventDefault()
+              addFiles(pasted.map((f, i) => (f.name && f.name !== 'image.png' ? f : new File([f], `Screenshot ${new Date().toLocaleString('en-GB').replace(/[/:,]/g, '-')}${i ? `-${i}` : ''}.png`, { type: f.type }))))
+            }
+          }}
+          placeholder={channel.kind === 'dm' ? `Message ${channel.name}` : `Message #${channel.name}`}
+          maxLength={4000}
+          aria-label="Message"
+          autoFocus
+        />
+        {!hasContent && (
+          <button
+            type="button"
+            className="icon-btn chat-tool"
+            onClick={() => void recorder.start()}
+            disabled={recorder.state === 'starting'}
+            aria-label="Record a voice message"
+            title="Record a voice message"
+          >
+            <Icon name="mic" size={18} />
+          </button>
+        )}
+        <button type="submit" className="btn btn-primary chat-send" disabled={!hasContent} aria-label="Send">
+          <Icon name="send" size={16} />
+        </button>
+      </form>
+    </div>
   )
 }
 
