@@ -5,6 +5,7 @@ import { ProjectStatusBadge } from '../components/Badges'
 import Icon from '../components/Icon'
 import { EmptyState, ErrorState, LoadingState } from '../components/States'
 import { api, errorMessage } from '../lib/api'
+import { planning } from '../lib/planning'
 import { usePermissions } from '../lib/permissions'
 import type { ProjectStatus } from '../lib/types'
 import { useApi } from '../lib/useApi'
@@ -91,6 +92,12 @@ export default function Projects() {
                   <ProjectStatusBadge status={p.status} />
                 </div>
                 <h2>{p.name}</h2>
+                {p.client && (
+                  <span className="project-client small">
+                    <span className="dot" style={{ background: p.client.color }} />
+                    {p.client.name}
+                  </span>
+                )}
                 <p className="muted project-desc">{p.description || 'No description.'}</p>
 
                 <div className="progress-row">
@@ -134,6 +141,11 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [dueDate, setDueDate] = useState('')
+  const [startDate, setStartDate] = useState('')
+  const [clientId, setClientId] = useState('')
+  // Clients of the chosen organization (hidden if there are none, or before migration 013).
+  const clients = useApi(() => planning.clients(workspaceId), [workspaceId], !!workspaceId)
+  const clientOptions = (clients.data ?? []).filter((c) => c.status === 'active')
   const [color, setColor] = useState(COLORS[0])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -152,7 +164,7 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
     setSaving(true)
     setError(null)
     try {
-      const project = await api.createProject({ name: name.trim(), workspace_id: workspaceId || undefined, description: description.trim(), color, due_date: dueDate || null })
+      const project = await api.createProject({ name: name.trim(), workspace_id: workspaceId || undefined, description: description.trim(), color, due_date: dueDate || null, start_date: startDate || null, client_id: clientId || null })
       showToast(`Project "${project.name}" created`)
       invalidate()
       navigate(`/projects/${project.id}`)
@@ -197,11 +209,30 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
             <span>Description</span>
             <textarea className="input textarea" rows={3} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What is this project about?" />
           </label>
-          <div className="modal-row">
+          {clientOptions.length > 0 && (
+            <label className="field">
+              <span>Client</span>
+              <select id="np-client" className="input" value={clientId} onChange={(e) => setClientId(e.target.value)}>
+                <option value="">No client (internal project)</option>
+                {clientOptions.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <div className="modal-row modal-row-even">
+            <label className="field">
+              <span>Start date</span>
+              <input id="np-start" className="input" type="date" value={startDate} max={dueDate || undefined} onChange={(e) => setStartDate(e.target.value)} />
+            </label>
             <label className="field">
               <span>Due date</span>
-              <input className="input" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+              <input id="np-due" className="input" type="date" value={dueDate} min={startDate || undefined} onChange={(e) => setDueDate(e.target.value)} />
             </label>
+          </div>
+          <div className="modal-row">
             <div className="field">
               <span>Colour</span>
               <div className="color-picker" role="radiogroup" aria-label="Colour">

@@ -38,6 +38,9 @@ export interface MemberRow {
   // Added in migration 005 (missing on older databases).
   status?: 'active' | 'deactivated'
   created_at?: string
+  // Added in migration 013. numeric columns can come back as strings.
+  hours_per_day?: number | string
+  work_days?: number[]
 }
 
 export const isActiveMember = (m: Pick<MemberRow, 'status'>) => m.status !== 'deactivated'
@@ -54,7 +57,38 @@ export interface ProjectRow {
   is_private?: boolean
   color: string
   owner_id: string | null
+  start_date?: string | null
   end_date: string | null
+  created_at: string
+  /** Added in migration 013. */
+  client_id?: string | null
+}
+
+export interface ClientRow {
+  id: string
+  workspace_id: string
+  name: string
+  contact_name: string
+  email: string
+  phone: string
+  website: string
+  address: string
+  notes: string
+  color: string
+  status: 'active' | 'archived'
+  created_by: string | null
+  created_at: string
+}
+
+export interface TimeOffRow {
+  id: string
+  workspace_id: string
+  user_id: string
+  start_date: string
+  end_date: string
+  kind: 'vacation' | 'sick' | 'holiday' | 'other'
+  note: string
+  created_by: string | null
   created_at: string
 }
 
@@ -83,6 +117,9 @@ export interface TaskRow {
   assigned_by_name: string | null
   meeting_id: string | null
   due_date: string | null
+  /** Added in migration 013. */
+  start_date?: string | null
+  estimate_minutes?: number | null
   priority: Priority
   status: DbTaskStatus
   position: number
@@ -165,7 +202,7 @@ export function toUser(r: ProfileRow): User {
   }
 }
 
-export type ProjectBase = Omit<Project, 'owner' | 'members' | 'task_count' | 'done_count' | 'open_count'>
+export type ProjectBase = Omit<Project, 'owner' | 'members' | 'task_count' | 'done_count' | 'open_count' | 'client'>
 
 export function toProject(r: ProjectRow): ProjectBase {
   return {
@@ -176,7 +213,9 @@ export function toProject(r: ProjectRow): ProjectBase {
     status: r.health,
     color: r.color,
     owner_id: r.owner_id ?? '',
+    start_date: r.start_date ?? null,
     due_date: r.end_date,
+    client_id: r.client_id ?? null,
     created_at: r.created_at,
     archived: r.status === 'archived',
     is_private: r.is_private ?? false,
@@ -205,7 +244,9 @@ export function toTask(r: TaskRow, workspaceId: string | null): TaskBase {
     assigned_by: r.assigned_by,
     created_by: r.created_by ?? r.assignee_id ?? '',
     meeting_id: r.meeting_id,
+    start_date: r.start_date ?? null,
     due_date: r.due_date,
+    estimate_minutes: r.estimate_minutes ?? null,
     position: r.position,
     created_at: r.created_at,
     updated_at: r.updated_at,

@@ -11,12 +11,14 @@ import Avatar from './Avatar'
 import Icon, { type IconName } from './Icon'
 import TaskPanel from './TaskPanel'
 
-const NAV: { to: string; label: string; icon: IconName; adminOnly?: boolean }[] = [
-  { to: '/dashboard', label: 'My tasks', icon: 'tasks' },
+const NAV: { to: string; label: string; icon: IconName; adminOnly?: boolean; managerOnly?: boolean }[] = [
+  { to: '/dashboard', label: 'My work', icon: 'tasks' },
   { to: '/projects', label: 'Projects', icon: 'folder' },
   { to: '/meetings', label: 'Meetings', icon: 'mic' },
   { to: '/chat', label: 'Chat', icon: 'message' },
-  { to: '/team', label: 'Team', icon: 'users' },
+  { to: '/people', label: 'People', icon: 'users' },
+  { to: '/resources', label: 'Resources', icon: 'barChart' },
+  { to: '/clients', label: 'Clients', icon: 'briefcase', managerOnly: true },
   { to: '/admin', label: 'Admin', icon: 'shield', adminOnly: true },
   { to: '/settings', label: 'Settings', icon: 'settings' },
 ]
@@ -40,6 +42,7 @@ export default function Layout() {
     return () => window.removeEventListener(CHAT_READ_EVENT, reloadUnread)
   }, [reloadUnread])
   const isAdminAnywhere = workspaces.some((w) => w.member_role === 'owner' || w.member_role === 'admin')
+  const isManagerAnywhere = isAdminAnywhere || workspaces.some((w) => w.member_role === 'manager')
 
   // Existing users who just accepted an email invite: tell them where they are now.
   const announced = useRef(0)
@@ -79,7 +82,7 @@ export default function Layout() {
         </div>
 
         <nav className="sidebar-nav" onClick={() => setNavOpen(false)}>
-          {NAV.filter((item) => !item.adminOnly || isAdminAnywhere).map((item) => (
+          {NAV.filter((item) => (!item.adminOnly || isAdminAnywhere) && (!item.managerOnly || isManagerAnywhere)).map((item) => (
             <NavLink key={item.to} to={item.to} className="nav-item">
               <Icon name={item.icon} />
               <span>{item.label}</span>

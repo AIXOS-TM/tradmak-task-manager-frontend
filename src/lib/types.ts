@@ -42,6 +42,48 @@ export interface Member extends User {
   task_count: number
   open_count: number
   done_count: number
+  /** Working hours per working day (migration 013; 8 before it). */
+  hours_per_day: number
+  /** Working weekdays, ISO numbers 1 = Mon … 7 = Sun (migration 013; Mon–Fri before it). */
+  work_days: number[]
+}
+
+export type ClientStatus = 'active' | 'archived'
+
+/** A company we do work for (migration 013). Projects can belong to one. */
+export interface Client {
+  id: string
+  workspace_id: string
+  name: string
+  contact_name: string
+  email: string
+  phone: string
+  website: string
+  address: string
+  notes: string
+  color: string
+  status: ClientStatus
+  created_at: string
+  project_count: number
+  /** Open / done / late tasks across the client's projects. */
+  open_count: number
+  done_count: number
+  overdue_count: number
+}
+
+export type ClientInput = Pick<Client, 'name' | 'contact_name' | 'email' | 'phone' | 'website' | 'address' | 'notes' | 'color'>
+
+export type TimeOffKind = 'vacation' | 'sick' | 'holiday' | 'other'
+
+export interface TimeOff {
+  id: string
+  workspace_id: string
+  user_id: string
+  start_date: string
+  end_date: string
+  kind: TimeOffKind
+  note: string
+  user: UserRef | null
 }
 
 export interface Project {
@@ -52,8 +94,13 @@ export interface Project {
   status: ProjectStatus
   color: string
   owner_id: string
+  /** Start of the project (shown on the Resources timeline). */
+  start_date: string | null
   due_date: string | null
   created_at: string
+  /** The client it's for (migration 013). */
+  client_id: string | null
+  client: { id: string; name: string; color: string } | null
   /** Archived projects are hidden from the sidebar and Projects page (Admin → Projects can restore them). */
   archived: boolean
   /** Only admins, the owner and the project's members can see a private project. */
@@ -87,7 +134,11 @@ export interface Task {
   assigned_by: string | null
   created_by: string
   meeting_id: string | null
+  /** When work starts (migration 013). */
+  start_date: string | null
   due_date: string | null
+  /** Expected effort in minutes (migration 013). */
+  estimate_minutes: number | null
   position: number
   created_at: string
   updated_at: string
@@ -183,7 +234,7 @@ export interface DashboardSummary {
 }
 
 export type TaskPatch = Partial<
-  Pick<Task, 'title' | 'description' | 'status' | 'priority' | 'due_date' | 'assignee_id' | 'list_id' | 'position'>
+  Pick<Task, 'title' | 'description' | 'status' | 'priority' | 'due_date' | 'start_date' | 'estimate_minutes' | 'assignee_id' | 'list_id' | 'position'>
 >
 
 // ---------- Organization admin ----------
