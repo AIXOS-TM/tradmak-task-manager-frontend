@@ -5,7 +5,7 @@ import { usePermissions } from '../lib/permissions'
 import type { Attachment, Priority, Task, TaskPatch, TaskStatus } from '../lib/types'
 import { useApi } from '../lib/useApi'
 import { useApp, useCurrentUser } from '../store/useApp'
-import { formatDue, formatShortDate, timeAgo } from '../utils/format'
+import { formatDue, formatMinutes, formatShortDate, parseEstimate, timeAgo } from '../utils/format'
 import { PRIORITY_LABELS, PRIORITY_ORDER, STATUS_LABELS, STATUS_ORDER } from '../utils/labels'
 import { AttachmentList, PendingFiles } from './Attachments'
 import Avatar from './Avatar'
@@ -295,6 +295,28 @@ function TaskPanelContent({ task, onSaved }: { task: Task; onSaved: (task: Task)
             <DueDate date={task.due_date} done={task.status === 'done'} />
           </dd>
 
+          {!isPersonal && (
+            <>
+              <dt>Start date</dt>
+              <dd>
+                <input
+                  type="date"
+                  className="plain-select"
+                  value={task.start_date ?? ''}
+                  max={task.due_date ?? undefined}
+                  disabled={locked}
+                  onChange={(e) => void save({ start_date: e.target.value || null })}
+                  aria-label="Start date"
+                />
+              </dd>
+
+              <dt>Estimate</dt>
+              <dd>
+                <EstimateInput key={`${task.id}:${task.estimate_minutes ?? ''}`} minutes={task.estimate_minutes} disabled={locked} onSave={(m) => void save({ estimate_minutes: m })} />
+              </dd>
+            </>
+          )}
+
           <dt>Priority</dt>
           <dd>
             <select
@@ -459,5 +481,30 @@ function TaskPanelContent({ task, onSaved }: { task: Task; onSaved: (task: Task)
         )}
       </footer>
     </>
+  )
+}
+
+/** Estimate box: type "2h", "1h 30m" or "45m"; saved when you leave the box or press Enter. */
+function EstimateInput({ minutes, disabled, onSave }: { minutes: number | null; disabled: boolean; onSave: (minutes: number | null) => void }) {
+  const [text, setText] = useState(minutes ? formatMinutes(minutes) : '')
+  const parsed = parseEstimate(text)
+  const invalid = Number.isNaN(parsed)
+  const commit = () => {
+    if (invalid || parsed === minutes) return
+    onSave(parsed)
+  }
+  return (
+    <input
+      className={`plain-select estimate-input ${invalid ? 'is-invalid' : ''}`}
+      value={text}
+      placeholder="e.g. 2h"
+      disabled={disabled}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}
+      aria-label="Estimate"
+      aria-invalid={invalid}
+      title={invalid ? 'Write it like 2h, 1h 30m or 45m' : 'How long this should take'}
+    />
   )
 }

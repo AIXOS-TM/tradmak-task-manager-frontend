@@ -1039,3 +1039,24 @@ ul {
 .hero-delete {
   margin-left: auto;
 }
+
+/* ---------- Small shared bits (013) ---------- */
+.check-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+.modal-footer-start {
+  margin-right: auto;
+  align-self: center;
+}
+.estimate-input {
+  width: 110px;
+}
+@media (min-width: 481px) {
+  .modal-row-even {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}

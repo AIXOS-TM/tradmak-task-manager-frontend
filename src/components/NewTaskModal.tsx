@@ -4,6 +4,7 @@ import { usePermissions } from '../lib/permissions'
 import type { Priority, Project, TaskList, TaskStatus } from '../lib/types'
 import { useApi } from '../lib/useApi'
 import { useApp, useCurrentUser } from '../store/useApp'
+import { formatMinutes, parseEstimate } from '../utils/format'
 import { PRIORITY_LABELS, PRIORITY_ORDER, STATUS_LABELS, STATUS_ORDER } from '../utils/labels'
 import Avatar from './Avatar'
 import Icon from './Icon'
@@ -33,6 +34,9 @@ export default function NewTaskModal({ project, lists, defaultStatus = 'todo', o
   const [status, setStatus] = useState<TaskStatus>(defaultStatus)
   const [priority, setPriority] = useState<Priority>('medium')
   const [dueDate, setDueDate] = useState('')
+  const [startDate, setStartDate] = useState('')
+  const [estimate, setEstimate] = useState('')
+  const [another, setAnother] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -48,6 +52,15 @@ export default function NewTaskModal({ project, lists, defaultStatus = 'todo', o
     e.preventDefault()
     const clean = title.trim()
     if (!clean) return
+    const minutes = parseEstimate(estimate)
+    if (Number.isNaN(minutes)) {
+      setError('Write the estimate like 2h, 1h 30m or 45m.')
+      return
+    }
+    if (startDate && dueDate && startDate > dueDate) {
+      setError('The start date must be on or before the due date.')
+      return
+    }
     setSaving(true)
     setError(null)
     try {
@@ -60,10 +73,21 @@ export default function NewTaskModal({ project, lists, defaultStatus = 'todo', o
         status,
         priority,
         due_date: dueDate || null,
+        start_date: startDate || null,
+        estimate_minutes: minutes,
       })
       const who = members.data?.find((m) => m.id === assigneeId)
       showToast(manager && who && who.id !== currentUser.id ? `Task assigned to ${who.name}` : 'Task created')
       invalidate()
+      if (another) {
+        // "Create and add another": keep the project, list, person and dates; clear the rest.
+        setTitle('')
+        setDescription('')
+        setEstimate('')
+        setSaving(false)
+        document.getElementById('nt-title')?.focus()
+        return
+      }
       onClose()
     } catch (err) {
       setError(errorMessage(err))
@@ -131,6 +155,27 @@ export default function NewTaskModal({ project, lists, defaultStatus = 'todo', o
 
           <div className="modal-row">
             <label className="field">
+              <span>Start date</span>
+              <input id="nt-start" className="input" type="date" value={startDate} max={dueDate || undefined} onChange={(e) => setStartDate(e.target.value)} />
+            </label>
+            <label className="field">
+              <span>Estimate</span>
+              <input
+                id="nt-estimate"
+                className="input"
+                value={estimate}
+                onChange={(e) => setEstimate(e.target.value)}
+                placeholder="e.g. 2h or 1h 30m"
+                aria-describedby="nt-estimate-hint"
+              />
+              <small id="nt-estimate-hint" className="muted">
+                {estimate && !Number.isNaN(parseEstimate(estimate)) ? `= ${formatMinutes(parseEstimate(estimate))}` : 'Used by the Resources workload.'}
+              </small>
+            </label>
+          </div>
+
+          <div className="modal-row">
+            <label className="field">
               <span>List</span>
               <select id="nt-list" className="input" value={listId} onChange={(e) => setListId(e.target.value)}>
                 {lists.map((l) => (
@@ -172,6 +217,9 @@ export default function NewTaskModal({ project, lists, defaultStatus = 'todo', o
         </div>
 
         <footer className="modal-footer">
+          <label className="check-inline small muted modal-footer-start">
+            <input type="checkbox" checked={another} onChange={(e) => setAnother(e.target.checked)} /> Create another
+          </label>
           <button type="button" className="btn btn-ghost" onClick={onClose} disabled={saving}>
             Cancel
           </button>

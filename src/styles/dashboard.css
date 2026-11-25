@@ -447,3 +447,205 @@
     font-size: 13px;
   }
 }
+
+/* ---------- My work (tabs, due counters, filters, groups) ---------- */
+.work-tabs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.work-tabs > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.work-tabs > button.active {
+  color: var(--accent-text);
+  border-bottom-color: var(--accent);
+}
+.due-counters {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  padding-bottom: 6px;
+}
+.due-counter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.due-counter strong {
+  color: var(--text);
+}
+.due-counter i,
+.task-group-head i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.due-late i,
+.tone-red i {
+  background: var(--danger);
+}
+.due-today i,
+.tone-blue i {
+  background: #3b82f6;
+}
+.due-upcoming i,
+.tone-amber i {
+  background: var(--warning);
+}
+.tone-green i {
+  background: var(--success);
+}
+.due-counter:hover {
+  border-color: var(--border-strong);
+}
+.due-counter.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.task-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.task-filters .input-sm {
+  width: auto;
+  height: 32px;
+  padding: 0 8px;
+  font-size: 13px;
+}
+.task-search {
+  flex: 1 1 200px;
+  max-width: 320px;
+}
+.task-search .input.input-sm {
+  width: 100%;
+  padding-left: 34px;
+}
+.segmented-icons button {
+  padding: 0 10px;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.task-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 20px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-2);
+}
+.estimate-chip {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--neutral-soft);
+  color: var(--neutral-text);
+  font-size: 11.5px;
+  font-weight: 600;
+  vertical-align: 1px;
+}
+
+/* My projects */
+.my-project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+.my-project {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+  color: inherit;
+  text-decoration: none;
+  transition: box-shadow 0.15s, border-color 0.15s;
+}
+.my-project:hover {
+  box-shadow: var(--shadow-md);
+  border-color: var(--border-strong);
+}
+.my-project-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.my-project-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.dot-lg {
+  width: 12px;
+  height: 12px;
+}
+.my-project-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.my-project-foot span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.my-project .text-warning {
+  color: var(--warning-text);
+}
+
+@media (max-width: 760px) {
+  .due-counters {
+    margin-left: 0;
+    width: 100%;
+    padding: 6px 0;
+    overflow-x: auto;
+  }
+  .task-filters {
+    padding: 10px 14px;
+  }
+  .task-search {
+    flex-basis: 100%;
+    max-width: none;
+  }
+}

@@ -24,6 +24,7 @@ import {
   toUser,
   toWorkspaceRole,
   type ActionItemRow,
+  type ClientRow,
   type CommentRow,
   type MeetingRow,
   type MemberRow,
@@ -117,7 +118,9 @@ export function toApiError(err: PostgrestError, what: string): ApiError {
     return new ApiError(403, /row-level security|permission denied/i.test(msg) ? `You don't have permission to ${what}.` : msg)
   }
   if (err.code === 'P0001') return new ApiError(400, msg) // raised by a taskapp function
-  if (err.code === 'PGRST202' || err.code === 'PGRST205' || err.code === '42P01') {
+  if (/tasks_start_before_due/.test(msg)) return new ApiError(400, 'The start date must be on or before the due date.')
+  if (err.code === '23514' && !/violates check constraint/i.test(msg)) return new ApiError(400, msg) // raised by a taskapp trigger
+  if (err.code === 'PGRST202' || err.code === 'PGRST204' || err.code === 'PGRST205' || err.code === '42P01' || err.code === '42703') {
     return new ApiError(500, 'The database is missing a newer update. Run the latest files in database/migrations in the Supabase SQL Editor.')
   }
   if (/failed to fetch|networkerror|load failed/i.test(msg)) return new ApiError(0, "Can't reach Supabase. Check your internet connection.")
@@ -175,7 +178,7 @@ async function commentCounts(taskIds: string[]): Promise<Map<string, number>> {
   return counts
 }
 
-async function hydrateTasks(rows: TaskRow[]): Promise<Task[]> {
+export async function hydrateTasks(rows: TaskRow[]): Promise<Task[]> {
   if (rows.length === 0) return []
   const [profiles, projects, lists, meetings, counts] = await Promise.all([
     fetchByIds<ProfileRow>('profiles', rows.flatMap((r) => [r.assignee_id, r.assigned_by])),
@@ -205,7 +208,7 @@ async function hydrateTasks(rows: TaskRow[]): Promise<Task[]> {
 /** A project row, optionally with its members already embedded (select '*, project_members(*)'). */
 type ProjectRowWithMembers = ProjectRow & { project_members?: ProjectMemberRow[] }
 
-async function hydrateProjects(rows: ProjectRowWithMembers[]): Promise<Project[]> {
+export async function hydrateProjects(rows: ProjectRowWithMembers[]): Promise<Project[]> {
   if (rows.length === 0) return []
   const ids = rows.map((r) => r.id)
   const db = client()
@@ -214,15 +217,18 @@ async function hydrateProjects(rows: ProjectRowWithMembers[]): Promise<Project[]
     ? rows.flatMap((r) => r.project_members ?? [])
     : check<ProjectMemberRow[]>(await db.from('project_members').select('*').in('project_id', ids), 'load project members')
   // Task counts and people load at the same time.
-  const [taskRows, profiles] = await Promise.all([
+  const [taskRows, profiles, clients] = await Promise.all([
     db.from('tasks').select('project_id, status').in('project_id', ids).then((r) => check<Pick<TaskRow, 'project_id' | 'status'>[]>(r, 'count project tasks')),
     fetchByIds<ProfileRow>('profiles', [...memberRows.map((m) => m.user_id), ...rows.map((r) => r.owner_id)]),
+    fetchByIds<ClientRow>('clients', rows.map((r) => r.client_id)).catch(() => new Map<string, ClientRow>()),
   ])
   return rows.map((r) => {
     const projectTasks = taskRows.filter((t) => t.project_id === r.id)
     const done = projectTasks.filter((t) => t.status === 'done').length
+    const c = r.client_id ? clients.get(r.client_id) : undefined
     return {
       ...toProject(r),
+      client: c ? { id: c.id, name: c.name, color: c.color } : null,
       owner: refOf(profiles, r.owner_id),
       members: memberRows
         .filter((m) => m.project_id === r.id)
@@ -347,7 +353,7 @@ async function isWorkspaceMember(workspaceId: string, userId: string): Promise<b
  * Members of the given workspaces, with counts of tasks ASSIGNED to them (personal tasks stay private).
  * Deactivated members are left out unless includeDeactivated is set (Admin page).
  */
-async function listMembers(workspaceIds: string[], { includeDeactivated = false } = {}): Promise<Member[]> {
+export async function listMembers(workspaceIds: string[], { includeDeactivated = false } = {}): Promise<Member[]> {
   if (workspaceIds.length === 0) return []
   const db = client()
   const [members, workspaces, projectRows] = await Promise.all([
@@ -384,6 +390,8 @@ async function listMembers(workspaceIds: string[], { includeDeactivated = false 
       task_count: assigned.length,
       done_count: done,
       open_count: assigned.length - done,
+      hours_per_day: m.hours_per_day === undefined ? 8 : Number(m.hours_per_day),
+      work_days: m.work_days ?? [1, 2, 3, 4, 5],
     })
   }
   return [...seen.values()]
@@ -801,7 +809,9 @@ export const api = {
     description?: string
     color?: string
     status?: ProjectStatus
+    start_date?: string | null
     due_date?: string | null
+    client_id?: string | null
   }): Promise<Project> {
     const uid = await me()
     let workspaceId = body.workspace_id
@@ -829,6 +839,9 @@ export const api = {
         health: body.status ?? 'on_track',
         end_date: body.due_date ?? null,
         owner_id: uid,
+        // Only sent when set, so creating projects keeps working before migration 013.
+        ...(body.start_date ? { start_date: body.start_date } : {}),
+        ...(body.client_id ? { client_id: body.client_id } : {}),
       }),
       'create projects',
     )
@@ -876,6 +889,8 @@ export const api = {
     list_id?: string
     description?: string
     due_date?: string | null
+    start_date?: string | null
+    estimate_minutes?: number | null
     priority?: Priority
     status?: TaskStatus
   }): Promise<Task> {
@@ -908,6 +923,9 @@ export const api = {
       created_by: uid,
       meeting_id: null,
       due_date: body.due_date ?? null,
+      // Only sent when set, so creating tasks keeps working before migration 013.
+      ...(body.start_date ? { start_date: body.start_date } : {}),
+      ...(body.estimate_minutes ? { estimate_minutes: body.estimate_minutes } : {}),
     })
   },
 
@@ -1436,6 +1454,18 @@ export const api = {
       )
       if (existing.length === 0) check(await db.from('project_members').insert({ project_id: id, user_id: patch.owner_id }), 'add the new owner to the project')
     }
+  },
+
+  /** Client and dates of a project (admins / managers). */
+  async updateProjectDetails(id: string, patch: { client_id?: string | null; start_date?: string | null; due_date?: string | null }): Promise<void> {
+    const fields: Record<string, unknown> = {}
+    if (patch.client_id !== undefined) fields.client_id = patch.client_id
+    if (patch.start_date !== undefined) fields.start_date = patch.start_date
+    if (patch.due_date !== undefined) fields.end_date = patch.due_date
+    const res = await client().from('projects').update(fields).eq('id', id).select('id')
+    if (res.error?.code === '23514' && /end_date|start_date/.test(res.error.message)) throw new ApiError(400, 'The end date must be on or after the start date.')
+    const rows = check<{ id: string }[]>(res, 'change this project')
+    if (rows.length === 0) throw forbidden('Only admins and managers can change projects.')
   },
 
   /** Sets exactly who is on the project (adds the missing people, removes the rest). */
