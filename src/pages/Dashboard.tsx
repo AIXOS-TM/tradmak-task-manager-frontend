@@ -250,7 +250,7 @@ export default function Dashboard() {
                 </button>
               ))}
             </div>
-            <button type="button" className="btn btn-primary btn-sm" onClick={() => setShowAdd(true)}>
+            <button type="button" className="btn btn-primary btn-sm" onClick={() => setShowAdd(true)} data-tour="add-personal">
               <Icon name="plus" size={15} /> Add personal task
             </button>
           </div>

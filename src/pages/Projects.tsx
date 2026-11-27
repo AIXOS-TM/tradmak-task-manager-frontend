@@ -44,7 +44,7 @@ export default function Projects() {
             ))}
           </div>
           {canCreate && (
-            <button type="button" className="btn btn-primary" onClick={() => setShowNew(true)}>
+            <button type="button" className="btn btn-primary" onClick={() => setShowNew(true)} data-tour="new-project">
               <Icon name="plus" size={16} /> New project
             </button>
           )}

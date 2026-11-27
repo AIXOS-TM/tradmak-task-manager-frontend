@@ -18,7 +18,7 @@ export default function Meetings() {
   const meetings = useApi(() => api.meetings(), [], true, { cache: 'meetings', persist: true })
   const canAdd = usePermissions().projectWorkspaces.length > 0
   const addButton = canAdd ? (
-    <Link to="/meetings/new" className="btn btn-primary">
+    <Link to="/meetings/new" className="btn btn-primary" data-tour="add-meeting">
       <Icon name="plus" size={16} /> Add meeting
     </Link>
   ) : null

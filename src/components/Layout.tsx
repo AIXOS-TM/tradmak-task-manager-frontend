@@ -9,6 +9,7 @@ import { useApp, useAuth, useCurrentUser } from '../store/useApp'
 import { daysUntil, timeAgo } from '../utils/format'
 import Avatar from './Avatar'
 import Icon, { type IconName } from './Icon'
+import Onboarding, { HelpMenu } from './Onboarding'
 import TaskPanel from './TaskPanel'
 
 const NAV: { to: string; label: string; icon: IconName; adminOnly?: boolean; managerOnly?: boolean }[] = [
@@ -83,7 +84,7 @@ export default function Layout() {
 
         <nav className="sidebar-nav" onClick={() => setNavOpen(false)}>
           {NAV.filter((item) => (!item.adminOnly || isAdminAnywhere) && (!item.managerOnly || isManagerAnywhere)).map((item) => (
-            <NavLink key={item.to} to={item.to} className="nav-item">
+            <NavLink key={item.to} to={item.to} className="nav-item" data-tour={`nav-${item.to.slice(1)}`}>
               <Icon name={item.icon} />
               <span>{item.label}</span>
               {item.to === '/dashboard' && !!summary.data?.open && <span className="nav-count">{summary.data.open}</span>}
@@ -134,6 +135,7 @@ export default function Layout() {
           </button>
           <GlobalSearch />
           <div className="topbar-actions">
+            <HelpMenu />
             <ThemeToggle />
             <Notifications />
             <NavLink to="/settings" className="topbar-user" aria-label="Profile settings">
@@ -149,6 +151,7 @@ export default function Layout() {
 
       <TaskPanel />
       <ToastHost />
+      <Onboarding setNavOpen={setNavOpen} />
     </div>
   )
 }
@@ -175,7 +178,7 @@ function GlobalSearch() {
   const results = q && tasks.data ? tasks.data.filter((t) => t.title.toLowerCase().includes(q)).slice(0, 6) : []
 
   return (
-    <div className="search">
+    <div className="search" data-tour="search">
       <Icon name="search" size={16} className="search-icon" />
       <input
         type="search"
@@ -343,8 +346,16 @@ function Notifications() {
   }
 
   return (
-    <div className="notif" ref={ref}>
-      <button type="button" className="icon-btn" onClick={() => setOpen((o) => !o)} aria-label={unread ? `Notifications (${unread} unread)` : 'Notifications'} aria-expanded={open}>
+    <div className="notif" ref={ref} data-tour="bell">
+      <button
+        type="button"
+        className="icon-btn"
+        onClick={() => {
+          // It may have been switched on elsewhere (e.g. the Getting started checklist).
+          setDesktop(desktopEnabled())
+          setOpen((o) => !o)
+        }}
+        aria-label={unread ? `Notifications (${unread} unread)` : 'Notifications'} aria-expanded={open}>
         <Icon name="bell" />
         {unread > 0 ? <span className="notif-count">{unread > 99 ? '99+' : unread}</span> : remindersNew > 0 && <span className="notif-dot" />}
       </button>
