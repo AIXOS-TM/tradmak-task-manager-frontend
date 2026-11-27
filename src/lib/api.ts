@@ -241,6 +241,9 @@ export async function hydrateProjects(rows: ProjectRowWithMembers[]): Promise<Pr
   })
 }
 
+/** Everything but the transcript, which can be long; it's loaded only when someone opens it. */
+const MEETING_COLUMNS = 'id, workspace_id, project_id, title, date, started_at, duration_min, summary, attendee_ids, created_at'
+
 async function summarizeMeetings(rows: MeetingRow[]): Promise<MeetingSummary[]> {
   if (rows.length === 0) return []
   const meetings = rows.map(toMeeting)
@@ -457,7 +460,7 @@ async function loadTasksForAssignee(userId: string, source?: TaskSource): Promis
   return (await hydrateTasks(rows)).sort(byStatusThenDue)
 }
 
-async function getTask(id: string): Promise<Task> {
+export async function getTask(id: string): Promise<Task> {
   const row = check<TaskRow | null>(await client().from('tasks').select('*').eq('id', id).maybeSingle(), 'load task')
   if (!row) throw notFound('Task')
   return (await hydrateTasks([row]))[0]
@@ -1097,13 +1100,13 @@ export const api = {
   async meetings(): Promise<MeetingSummary[]> {
     const ids = await myWorkspaceIds(await me())
     if (ids.length === 0) return []
-    const rows = check<MeetingRow[]>(await client().from('meetings').select('*').in('workspace_id', ids), 'load meetings')
+    const rows = check<MeetingRow[]>(await client().from('meetings').select(MEETING_COLUMNS).in('workspace_id', ids), 'load meetings')
     return (await summarizeMeetings(rows)).sort((a, b) => b.started_at.localeCompare(a.started_at))
   },
 
   async meeting(id: string): Promise<MeetingDetail> {
     const db = client()
-    const row = check<MeetingRow | null>(await db.from('meetings').select('*').eq('id', id).maybeSingle(), 'load meeting')
+    const row = check<MeetingRow | null>(await db.from('meetings').select(MEETING_COLUMNS).eq('id', id).maybeSingle(), 'load meeting')
     if (!row) throw notFound('Meeting')
     const [summary, items] = await Promise.all([
       summarizeMeetings([row]),

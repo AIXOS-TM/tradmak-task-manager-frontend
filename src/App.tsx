@@ -7,6 +7,7 @@ import Clients from './pages/Clients'
 import Dashboard from './pages/Dashboard'
 import Login from './pages/Login'
 import Meetings from './pages/Meetings'
+import NewMeeting from './pages/NewMeeting'
 import People from './pages/People'
 import ProjectDetail from './pages/ProjectDetail'
 import Projects from './pages/Projects'
@@ -34,6 +35,7 @@ function App() {
         <Route path="/projects" element={<Projects />} />
         <Route path="/projects/:projectId" element={<ProjectDetail />} />
         <Route path="/meetings" element={<Meetings />} />
+        <Route path="/meetings/new" element={<NewMeeting />} />
         <Route path="/meetings/:meetingId" element={<Meetings />} />
         <Route path="/chat" element={<Chat />} />
         <Route path="/chat/:channelId" element={<Chat />} />
